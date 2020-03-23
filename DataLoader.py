@@ -5,6 +5,7 @@ from convert2Yolo.Format import YOLO as cvtYOLO
 from convert2Yolo.Format import VOC as cvtVOC
 
 import imgaug.augmenters as iaa
+import tensorflow as tf
 import numpy as np
 import os
 
@@ -86,18 +87,12 @@ class VOCDataset(Sequence):
         except Exception as e:
             raise RuntimeError("Error: {}".format(e))
 
-    # def augment_image(self, img):
-    #     self.seq_det = self.AUGMENTER.to_deterministic()
-    #     return self.seq_det.augment_image(img)
-
-    # def __data_generation(self, classes_tmp):
-    #     X = np.empty((self.batch_size, *self.model_input_dim))
-
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, index):
         key = list(self.data[index].keys())[0]
+        print(key)
         img = Image.open(key).convert('RGB')
         current_shape = img.size
         img = img.resize((self.resize_factor, self.resize_factor))
@@ -106,15 +101,20 @@ class VOCDataset(Sequence):
 
         if self.transform is not None:
             # img = self.transform(img) # no augmentation
-            img, aug_target = self.transform([img, target])
+            img, aug_target = self.transform(
+                augmenter=self.AUGMENTER,
+                image=img,
+                target=target,
+                class_list=self.classes,
+                image_width=self.resize_factor,
+                image_height=self.resize_factor
+            )
+
+            img = tf.convert_to_tensor(img)
             return img, aug_target, current_shape
-
-        # if self.target_transform is not None:
-        #     # some target transformation works
-        #     pass
-
         else:
-            return img, target, current_shape  # no augmentationTen
+            img = tf.convert_to_tensor(np.array(img))
+            return img, target, current_shape  # no augmentation
 
     # def on_epoch_end(self):
     #     self.indexes = np.arange(len(self.classes))
