@@ -1,113 +1,106 @@
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from DataLoader import VOCDataset
+# INFO까지의 로그 Suppress하기
+import os
+import os.path
+import numpy as np
+from PIL import Image, ImageDraw
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.optimizers import Adam
+
+from DataLoader import Yolov2Dataloader
 from Model import YoloModel
 from Loss import Yolov3Loss
-from PIL import Image, ImageDraw
-from augmentation import *
 
-import imgaug as ia
-import imgaug.augmenters as iaa
-import numpy as np
-import tensorflow as tf
-import random
+GLOBAL_EPOCHS = 5
+SAVE_PERIOD_EPOCHS = 1
+CHECKPOINT_FILENAME = "yolov2-training.hdf5"
+MODE_TRAIN = True
+LOAD_WEIGHT = True
 
+LEARNING_RATE = 5e-6
+DECAY_RATE = 5e-5
+thresh1 = 0.2
+thresh2 = 0.2
+BATCH_SIZE = 4
 
-def test_display_dataset(train_dataset):
-    item_no = random.randrange(0, train_dataset.__len__() - 1)
+# train_data = Yolov2Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=BATCH_SIZE, augmentation=True)
+# train_data_no_augmentation = Yolov2Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=BATCH_SIZE,
+#                                               augmentation=False)
+# valid_train_data = Yolov2Dataloader(file_name='manifest-valid.txt', numClass=20, batch_size=2)
+# test_data = Yolov2Dataloader(file_name='manifest-test.txt', numClass=20, batch_size=4)
 
-    print("Length of train dataset: ", train_dataset.__len__())
-    print("--- Displaying random data ", item_no, " ---")
-    img, target, current_shape = train_dataset.__getitem__(item_no)
-    draw = ImageDraw.Draw(img)
-    for item in target:
-        converted_target_rect = [int(k * 448) for k in item[1:]]
-        converted_target_rect[0] -= converted_target_rect[2] / 2
-        converted_target_rect[1] -= converted_target_rect[3] / 2
-        converted_target_rect[2] += converted_target_rect[0]
-        converted_target_rect[3] += converted_target_rect[1]
-        draw.rectangle(converted_target_rect, outline='red')
+train_data_two = Yolov2Dataloader(file_name='manifest-two.txt', numClass=20, batch_size=BATCH_SIZE)
 
-    print("Original image shape: ", current_shape)
-    print("Image target: ", target)
-    print("Converted Image target: class ", int(target[0][0]), ", rect ", converted_target_rect)
-    print("Image:")
+TARGET_TRAIN_DATA = train_data_two
 
-    img.show()
+# 6 anchors
+# [https://github.com/Jumabek/darknet_scripts/blob/master/generated_anchors/voc-anchors-reproduce/anchors3.txt]
+# ANCHORS = [1.44, 2.42, 4.04, 6.30, 9.58, 9.66]
 
+# Original anchors
+# [https://github.com/experiencor/keras-yolo3/blob/master/config.json]
+ANCHORS = [55, 69, 75, 234, 133, 240, 136, 129, 142, 363, 203, 290, 228, 184, 285, 359, 341, 260]
 
-def test_display_augment_dataset(train_dataset):
-    seq = iaa.SomeOf(2, [
-        # iaa.Multiply((1.2, 1.5)),
-        iaa.Affine(
-            translate_px={"x": 100, "y": 200},
-            scale=(0.9, 0.9)
-        ),
-        # iaa.AdditiveGaussianNoise(scale=0.1 * 255),
-        # iaa.CoarseDropout(0.02, size_percent=0.15, per_channel=0.5),
-        # iaa.Affine(rotate=45)
-        # iaa.Sharpen(alpha=0.5)
-    ])
+train_model, infer_model = YoloModel(
+    nb_class=20,
+    anchors=ANCHORS,
+    max_box_per_image=5,
+    max_grid=(448, 448),
+    batch_size=BATCH_SIZE,
+    warmup_batches=3,
+    ignore_thresh=0.5,
+    grid_scales=[1, 1, 1],
+    obj_scale=5,
+    noobj_scale=1,
+    xywh_scale=1,
+    class_scale=1
+)
+optimizer = Adam(learning_rate=LEARNING_RATE, decay=DECAY_RATE)
+train_model.compile(optimizer=optimizer, loss=Yolov3Loss)
+infer_model.compile(optimizer=optimizer, loss=Yolov3Loss)
 
-    print("Length of train dataset: ", train_dataset.__len__())
-    items = [train_dataset.__getitem__(random.randrange(0, train_dataset.__len__())) for k in range(20)]
-    # items = [ train_dataset.__getitem__(0) ]
-    batch_size = 4
-    aug_det = seq.to_deterministic()
-    for img, target, current_shape in items:
-        imgaug_target = convert_voc_bbox_to_iaa_bbox(target, train_dataset.classes, 448, 448)
-        print("--- Displaying random data  ---")
-        print("Original image shape: ", current_shape)
-        print("Original target output (YOLOv3 output): ", target)
-        print("Image target bbox(input to imgaug): ", imgaug_target)
+train_model.summary()
 
-        image_aug, bbs_aug = seq(image=np.array(img), bounding_boxes=imgaug_target)
-        bbs_aug = bbs_aug.remove_out_of_image()
-        bbs_aug = bbs_aug.clip_out_of_image()
+save_frequency = int(
+    SAVE_PERIOD_EPOCHS * TARGET_TRAIN_DATA.__len__() / TARGET_TRAIN_DATA.batch_size *
+    (1 if TARGET_TRAIN_DATA.augmenter else TARGET_TRAIN_DATA.augmenter_size)
+)
+print("Save frequency is {} sample, batch_size={}.".format(save_frequency, TARGET_TRAIN_DATA.batch_size))
 
-        bbs_aug_yolo = [
-            [
-                float(bbox.label),
-                bbox.center_x / 448,
-                bbox.center_y / 448,
-                bbox.width / 448,
-                bbox.height / 448
-            ] for bbox in bbs_aug.bounding_boxes
-        ]
-
-        print("Augmented Image: ", image_aug.shape)
-        print("Augmented BBox: ", bbs_aug)
-        print("Augmented and YOLOized BBox: ", bbs_aug_yolo)
-        Image.fromarray(bbs_aug.draw_on_image(image_aug)).show()
-        Image.fromarray(imgaug_target.draw_on_image(np.array(img))).show()
-        input()
-
-    return
-
-    print("Original image shape: ", current_shape)
-    print("Image target: ", target)
-    print("Converted Image target: class ", int(target[0][0]), ", rect ", converted_target_rect)
-    print("Image: ", img)
-
-    # seq_det = seq.to_deterministic()
-    # image_aug = seq_det.augment_image([img])
-
-    Image.fromarray(image_aug).show()
-
-
-data_path = './VOCdevkit/VOC2007'
-class_path = './voc.names'
-
-train_dataset = VOCDataset(
-    root=data_path,
-    # transform=augmentImage,  # Image augmenter
-    transform=None,
-    class_path=class_path
+save_best_model = ModelCheckpoint(
+    CHECKPOINT_FILENAME,
+    save_best_only=True,
+    save_weights_only=True,
+    monitor='loss',
+    mode='min',
+    save_freq=save_frequency
 )
 
-# test_display_dataset(train_dataset)
-test_display_augment_dataset(train_dataset)
+if LOAD_WEIGHT:
+    if os.path.isfile(CHECKPOINT_FILENAME):
+        train_model.load_weights(CHECKPOINT_FILENAME)
+    else:
+        print("Checkpoint file not found: ".format(CHECKPOINT_FILENAME))
 
-# model = YoloModel()
-# model.compile(loss=Yolov3Loss)
-#
-# model.summary()
+if MODE_TRAIN:
+    train_model.fit(
+        TARGET_TRAIN_DATA,
+        epochs=GLOBAL_EPOCHS,
+        validation_data=TARGET_TRAIN_DATA,
+        shuffle=True,
+        callbacks=[save_best_model],
+        verbose=1
+    )
+else:
+    import random
+
+    data_iterations = 1
+    result_set = []
+    for _ in range(data_iterations):
+        image, _, _ = test_data.__getitem__(random.randrange(0, test_data.__len__()))
+        result = infer_model.predict(image)
+        # postprocess_non_nms_result(image, result)
+
+    print(result_set)

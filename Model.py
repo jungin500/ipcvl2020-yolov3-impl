@@ -9,7 +9,8 @@ CLASSES = 20
 
 DEBUG_MODE = True
 
-#TODO Refactoring class
+
+# TODO Refactoring class
 class YoloLayer(Layer):
     def __init__(self, anchors, max_grid, batch_size, warmup_batches, ignore_thresh,
                  grid_scale, obj_scale, noobj_scale, xywh_scale, class_scale,
@@ -27,7 +28,8 @@ class YoloLayer(Layer):
         # make a persistent mesh grid
         max_grid_h, max_grid_w = max_grid
 
-        cell_x = tf.to_float(tf.reshape(tf.tile(tf.range(max_grid_w), [max_grid_h]), (1, max_grid_h, max_grid_w, 1, 1)))
+        cell_x = tf.cast(dtype=tf.float32,
+                         x=tf.reshape(tf.tile(tf.range(max_grid_w), [max_grid_h]), (1, max_grid_h, max_grid_w, 1, 1)))
         cell_y = tf.transpose(cell_x, (0, 2, 1, 3, 4))
         self.cell_grid = tf.tile(tf.concat([cell_x, cell_y], -1), [batch_size, 1, 1, 3, 1])
 
@@ -107,7 +109,7 @@ class YoloLayer(Layer):
         iou_scores = tf.truediv(intersect_areas, union_areas)
 
         best_ious = tf.reduce_max(iou_scores, axis=4)
-        conf_delta *= tf.expand_dims(tf.to_float(best_ious < self.ignore_thresh), 4)
+        conf_delta *= tf.expand_dims(tf.cast(dtype=tf.float32, x=best_ious < self.ignore_thresh), 4)
 
         """
         Compute some online statistics
@@ -140,10 +142,13 @@ class YoloLayer(Layer):
 
         count = tf.reduce_sum(object_mask)
         count_noobj = tf.reduce_sum(1 - object_mask)
-        detect_mask = tf.to_float((pred_box_conf * object_mask) >= 0.5)
-        class_mask = tf.expand_dims(tf.to_float(tf.equal(tf.argmax(pred_box_class, -1), true_box_class)), 4)
-        recall50 = tf.reduce_sum(tf.to_float(iou_scores >= 0.5) * detect_mask * class_mask) / (count + 1e-3)
-        recall75 = tf.reduce_sum(tf.to_float(iou_scores >= 0.75) * detect_mask * class_mask) / (count + 1e-3)
+        detect_mask = tf.cast(dtype=tf.float32, x=(pred_box_conf * object_mask) >= 0.5)
+        class_mask = tf.expand_dims(
+            tf.cast(dtype=tf.float32, x=tf.equal(tf.argmax(pred_box_class, -1), true_box_class)), 4)
+        recall50 = tf.reduce_sum(tf.cast(dtype=tf.float32, x=iou_scores >= 0.5) * detect_mask * class_mask) / (
+                    count + 1e-3)
+        recall75 = tf.reduce_sum(tf.cast(dtype=tf.float32, x=iou_scores >= 0.75) * detect_mask * class_mask) / (
+                    count + 1e-3)
         avg_iou = tf.reduce_sum(iou_scores) / (count + 1e-3)
         avg_obj = tf.reduce_sum(pred_box_conf * object_mask) / (count + 1e-3)
         avg_noobj = tf.reduce_sum(pred_box_conf * (1 - object_mask)) / (count_noobj + 1e-3)
@@ -152,14 +157,14 @@ class YoloLayer(Layer):
         """
         Warm-up training
         """
-        batch_seen = tf.assign_add(batch_seen, 1.)
+        batch_seen = batch_seen.assign_add(1.)
 
         true_box_xy, true_box_wh, xywh_mask = tf.cond(tf.less(batch_seen, self.warmup_batches + 1),
                                                       lambda: [true_box_xy + (
-                                                                  0.5 + self.cell_grid[:, :grid_h, :grid_w, :, :]) * (
-                                                                           1 - object_mask),
+                                                              0.5 + self.cell_grid[:, :grid_h, :grid_w, :, :]) * (
+                                                                       1 - object_mask),
                                                                true_box_wh + tf.zeros_like(true_box_wh) * (
-                                                                           1 - object_mask),
+                                                                       1 - object_mask),
                                                                tf.ones_like(object_mask)],
                                                       lambda: [true_box_xy,
                                                                true_box_wh,
@@ -175,7 +180,7 @@ class YoloLayer(Layer):
         xy_delta = xywh_mask * (pred_box_xy - true_box_xy) * wh_scale * self.xywh_scale
         wh_delta = xywh_mask * (pred_box_wh - true_box_wh) * wh_scale * self.xywh_scale
         conf_delta = object_mask * (pred_box_conf - true_box_conf) * self.obj_scale + (
-                    1 - object_mask) * conf_delta * self.noobj_scale
+                1 - object_mask) * conf_delta * self.noobj_scale
         class_delta = object_mask * \
                       tf.expand_dims(
                           tf.nn.sparse_softmax_cross_entropy_with_logits(labels=true_box_class, logits=pred_box_class),
@@ -189,18 +194,18 @@ class YoloLayer(Layer):
 
         loss = loss_xy + loss_wh + loss_conf + loss_class
 
-        if DEBUG_MODE:
-            loss = tf.Print(loss, [grid_h, avg_obj], message='avg_obj \t\t', summarize=1000)
-            loss = tf.Print(loss, [grid_h, avg_noobj], message='avg_noobj \t\t', summarize=1000)
-            loss = tf.Print(loss, [grid_h, avg_iou], message='avg_iou \t\t', summarize=1000)
-            loss = tf.Print(loss, [grid_h, avg_cat], message='avg_cat \t\t', summarize=1000)
-            loss = tf.Print(loss, [grid_h, recall50], message='recall50 \t', summarize=1000)
-            loss = tf.Print(loss, [grid_h, recall75], message='recall75 \t', summarize=1000)
-            loss = tf.Print(loss, [grid_h, count], message='count \t', summarize=1000)
-            loss = tf.Print(loss, [grid_h, tf.reduce_sum(loss_xy),
-                                   tf.reduce_sum(loss_wh),
-                                   tf.reduce_sum(loss_conf),
-                                   tf.reduce_sum(loss_class)], message='loss xy, wh, conf, class: \t', summarize=1000)
+        # if DEBUG_MODE:
+        #     tf.print('avg_obj \t\t{} {}'.format(grid_h, avg_obj))
+        #     tf.print('avg_noobj \t\t{} {}'.format(grid_h, avg_noobj))
+        #     tf.print('avg_iou \t\t{} {}'.format(grid_h, avg_iou))
+        #     tf.print('avg_cat \t\t{} {}'.format(grid_h, avg_cat))
+        #     tf.print('recall50 \t{} {}'.format(grid_h, recall50))
+        #     tf.print('recall75 \t{} {}'.format(grid_h, recall75))
+        #     tf.print('count \t{} {}'.format(grid_h, count))
+        #     tf.print('loss xy, wh, conf, class: \t{} {} {} {} {}'.format(grid_h, tf.reduce_sum(loss_xy),
+        #                                                                  tf.reduce_sum(loss_wh),
+        #                                                                  tf.reduce_sum(loss_conf),
+        #                                                                  tf.reduce_sum(loss_class)))
 
         return loss * self.grid_scale
 
@@ -209,7 +214,8 @@ class YoloLayer(Layer):
 
 
 def Conv2DLRU(x, filters, kernel_size, strides=(1, 1), name=None):
-    x = Conv2D(filters, kernel_size, strides, use_bias=False, padding='same', name=None if name is None else 'conv_' + name)(x)
+    x = Conv2D(filters, kernel_size, strides, use_bias=False, padding='same',
+               name=None if name is None else 'conv_' + name)(x)
     x = BatchNormalization(epsilon=0.001)(x)
     x = LeakyReLU(alpha=0.1)(x)
     return x
@@ -254,18 +260,18 @@ def ResidualIDBlock(X, filters, stage, block='a'):
 
 
 def YoloModel(
-    nb_class,
-    anchors,
-    max_box_per_image,
-    max_grid,
-    batch_size,
-    warmup_batches,
-    ignore_thresh,
-    grid_scales,
-    obj_scale,
-    noobj_scale,
-    xywh_scale,
-    class_scale
+        nb_class,
+        anchors,
+        max_box_per_image,
+        max_grid,
+        batch_size,
+        warmup_batches,
+        ignore_thresh,
+        grid_scales,
+        obj_scale,
+        noobj_scale,
+        xywh_scale,
+        class_scale
 ):
     # input = Input(shape=(256, 256, 3))
     input_image = Input(shape=(None, None, 3))  # net_h, net_w, 3
@@ -278,7 +284,7 @@ def YoloModel(
         shape=(None, None, len(anchors) // 6, 4 + 1 + nb_class))  # grid_h, grid_w, nb_anchor, 5+nb_class
 
     # L1 Outer
-    x = Conv2DLRU(input, filters=32, kernel_size=3)
+    x = Conv2DLRU(input_image, filters=32, kernel_size=3)
     x = Conv2DLRU(x, filters=64, kernel_size=3, strides=2)
 
     # L2 Residual (x1)
@@ -339,9 +345,9 @@ def YoloModel(
 
     # L12 Sub-Branch Classifier #1 (Layer 80~)
     pred_yolo_1 = Conv2DLRU(x, filters=1024, kernel_size=3)
-    pred_yolo_1 = Conv2D(pred_yolo_1, filters=3*(5+CLASSES), kernel_size=1) # Conv2DLRU without BN and LRU
+    pred_yolo_1 = Conv2D(filters=3 * (5 + CLASSES), kernel_size=1)(x)  # Conv2DLRU without BN and LRU
     loss_yolo_1 = YoloLayer(anchors[12:],
-                            [1*num for num in max_grid],
+                            [1 * num for num in max_grid],
                             batch_size,
                             warmup_batches,
                             ignore_thresh,
@@ -365,9 +371,9 @@ def YoloModel(
 
     # L15 Sub-Branch Classifier #2 (Layer 92~)
     pred_yolo_2 = Conv2DLRU(x, filters=512, kernel_size=3)
-    pred_yolo_2 = Conv2D(pred_yolo_2, filters=3*(5+CLASSES), kernel_size=1) # Conv2DLRU without BN and LRU
+    pred_yolo_2 = Conv2D(filters=3 * (5 + CLASSES), kernel_size=1)(pred_yolo_2)  # Conv2DLRU without BN and LRU
     loss_yolo_2 = YoloLayer(anchors[6:12],
-                            [2*num for num in max_grid],
+                            [2 * num for num in max_grid],
                             batch_size,
                             warmup_batches,
                             ignore_thresh,
@@ -389,9 +395,9 @@ def YoloModel(
     pred_yolo_3 = Conv2DLRU(pred_yolo_3, filters=256, kernel_size=1)
     pred_yolo_3 = Conv2DLRU(pred_yolo_3, filters=128, kernel_size=1)
     pred_yolo_3 = Conv2DLRU(pred_yolo_3, filters=256, kernel_size=1)
-    pred_yolo_3 = Conv2D(pred_yolo_3, filters=3*(5+CLASSES), kernel_size=1) # Conv2DLRU without BN and LRU
+    pred_yolo_3 = Conv2D(filters=3 * (5 + CLASSES), kernel_size=1)(pred_yolo_3)  # Conv2DLRU without BN and LRU
     loss_yolo_3 = YoloLayer(anchors[:6],
-                            [4*num for num in max_grid],
+                            [4 * num for num in max_grid],
                             batch_size,
                             warmup_batches,
                             ignore_thresh,
@@ -402,7 +408,7 @@ def YoloModel(
                             class_scale)([input_image, pred_yolo_3, true_yolo_3, true_boxes])
 
     # L18 Output of Model
-    #TODO OUTPUT 3개중 하나만 가지고 Test 해보기!
+    # TODO OUTPUT 3개중 하나만 가지고 Test 해보기!
     train_model = Model(
         [input_image, true_boxes, true_yolo_1, true_yolo_2, true_yolo_3],
         [loss_yolo_1, loss_yolo_2, loss_yolo_3]
