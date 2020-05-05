@@ -142,7 +142,7 @@ def visualize(image, gt_label, out_label=None, batch_index=0, scale_range=range(
 
 MODE_TRAIN = True
 INTERACTIVE_TRAIN = False
-LOAD_WEIGHT = False
+LOAD_WEIGHT = True
 
 #! TODO Test augmented result
 train_data = Yolov3Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=8, augmentation=True)
@@ -171,10 +171,10 @@ TARGET_TRAIN_DATA = train_data_no_augmentation
 LOG_NAME = "v2-allitems-validset-2000epochs-lr0.1-decay0.01"
 
 CHECKPOINT_SAVE_DIR = "D:\\ModelCheckpoints\\2020-yolov3-impl\\"
-LOAD_CHECKPOINT_FILENAME = CHECKPOINT_SAVE_DIR + "20200421-235535-weights.epoch300-loss42.33.hdf5"
+LOAD_CHECKPOINT_FILENAME = CHECKPOINT_SAVE_DIR + "20200505-191622-weights.epoch80-loss261.60.hdf5"
 CHECKPOINT_TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-")
 
-GLOBAL_EPOCHS = 2000
+GLOBAL_EPOCHS = 420
 SAVE_PERIOD_SAMPLES = len(TARGET_TRAIN_DATA.image_list) * 10  # 10 epoch
 VERBOSE_LOSS = False
 
@@ -209,10 +209,10 @@ else:
 
 model_checkpoint = ModelCheckpoint(
     CHECKPOINT_SAVE_DIR + CHECKPOINT_TIMESTAMP + 'weights.epoch{epoch:02d}-loss{loss:.2f}.hdf5',
-    save_best_only=True,
+    save_best_only=False,
     save_weights_only=True,
-    monitor='loss',
-    mode='min',
+    # monitor='loss',
+    # mode='min',
     # save_freq=save_frequency
     save_freq=save_frequency_raw
 )

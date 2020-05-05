@@ -84,7 +84,7 @@ class Yolov3Dataloader(utils.Sequence):
     def on_epoch_end(self):
         'Updates indexes after each epoch'
         self.indexes = np.arange(len(self.image_list))
-        if self.shuffle == True:
+        if self.shuffle:
             np.random.shuffle(self.indexes)
 
     def GetDataList(self, folder_path: str):
