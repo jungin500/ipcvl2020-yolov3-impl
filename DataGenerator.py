@@ -56,7 +56,7 @@ class Yolov3Dataloader(utils.Sequence):
         iaa.Sharpen(alpha=0.5)
     ])
 
-    def __init__(self, file_name, dim=(416, 416, 3), batch_size=1, numClass=1, augmentation=False, shuffle=True):
+    def __init__(self, file_name, dim=(416, 416, 3), batch_size=1, numClass=1, augmentation=False, shuffle=True, verbose=False):
         self.image_list, self.label_list = self.GetDataList(file_name)
         self.dim = dim
         self.batch_size = batch_size
@@ -64,6 +64,7 @@ class Yolov3Dataloader(utils.Sequence):
         self.augmenter = self.DEFAULT_AUGMENTER if augmentation else False
         self.outSize = 5 + numClass
         self.labeler = Labeler('voc.names')
+        self.verbose = verbose
         self.on_epoch_end()
 
     def __len__(self):
@@ -76,6 +77,7 @@ class Yolov3Dataloader(utils.Sequence):
         batch_y = [self.label_list[k] for k in indexes]
 
         X, Y = self.__data_generation(batch_x, batch_y)
+        self.verbose = False  # one-time
 
         return X, Y
 
@@ -242,6 +244,9 @@ class Yolov3Dataloader(utils.Sequence):
             # // : 몫
             grid_x_index = int(x // scale_factor)
             grid_y_index = int(y // scale_factor)
+
+            if self.verbose:
+                print("[%d] GT Grid [y=%d, x=%d, a=%d] %s" % (label_scale, grid_y_index, grid_x_index, anchor_idx, self.labeler.get_name(c)))
 
             # x와 y는 해당 grid cell-relative value이다.
             cell_relative_x, cell_relative_y = (x * label_scale, y * label_scale)

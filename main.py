@@ -69,7 +69,7 @@ def visualize(image, gt_label, out_label=None, batch_index=0, scale_range=range(
                         transparant_pil = Image.new('RGBA', (416, 416))
                         image_pil_draw = ImageDraw.Draw(transparant_pil)
                         image_pil_draw.rectangle([gt_xmin, gt_ymin, gt_xmax, gt_ymax],
-                                                 fill=(255, 255, 0, 100), outline=(255, 255, 0, 255))
+                                                 fill=(0, 255, 255, 100), outline=(0, 255, 255, 255))
                         image_pil_draw.text([gt_xmin + 4, gt_ymin + 2], text='O', fill='white')
                         image_pil.paste(transparant_pil, mask=transparant_pil)
 
@@ -94,7 +94,11 @@ def visualize(image, gt_label, out_label=None, batch_index=0, scale_range=range(
 
                     # for ModelOut values
                     if out_label is not None and (
-                            raw_modelout_label[y, x, a, 24] >= pred_threshold or
+                            (
+                                raw_modelout_label[y, x, a, 24] >= pred_threshold
+                                and np.max(raw_modelout_label[y, x, a, 24] * raw_modelout_label[y, x, a, :20])
+                                >= pred_threshold
+                            ) or
                             (pred_display_only_gt and raw_gt_label[y, x, a, 24] == 1.)
                     ):
                         # Print class prob on result view
@@ -110,7 +114,7 @@ def visualize(image, gt_label, out_label=None, batch_index=0, scale_range=range(
                         global_relative_xy = (raw_modelout_label[y, x, a, 20:22] + np.array([x, y])) / np.array([width, height])
                         pred_xmin, pred_ymin = (global_relative_xy - (raw_modelout_label[y, x, a, 22:24] / 2)) * image_size
                         pred_xmax, pred_ymax = (global_relative_xy + (raw_modelout_label[y, x, a, 22:24] / 2)) * image_size
-                        threshold_value_str = str(int(max_class_prob * 10) / 10)
+                        threshold_value_str = str(round(max_class_prob, 2))
 
                         transparant_pil = Image.new('RGBA', (416, 416))
                         image_pil_draw = ImageDraw.Draw(transparant_pil)
@@ -137,19 +141,21 @@ def visualize(image, gt_label, out_label=None, batch_index=0, scale_range=range(
 
 
 MODE_TRAIN = True
-INTERACTIVE_TRAIN = True
+INTERACTIVE_TRAIN = False
 LOAD_WEIGHT = False
 
-train_data = Yolov3Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=16, augmentation=True)
+#! TODO Test augmented result
+train_data = Yolov3Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=8, augmentation=True)
 train_data_no_augmentation = Yolov3Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=16,
                                               augmentation=False)
 valid_train_data = Yolov3Dataloader(file_name='manifest-valid.txt', numClass=20, batch_size=16)
 test_data = Yolov3Dataloader(file_name='manifest-test.txt', numClass=20, batch_size=2)
 
-dev_1 = Yolov3Dataloader(file_name='manifest-1.txt', numClass=20, batch_size=1, augmentation=False)
+dev_1 = Yolov3Dataloader(file_name='manifest-1-v2.txt', numClass=20, batch_size=1, augmentation=False, verbose=True)
+dev_1_dupe16 = Yolov3Dataloader(file_name='manifest-1-dupe16.txt', numClass=20, batch_size=16, augmentation=False)
 dev_2 = Yolov3Dataloader(file_name='manifest-2.txt', numClass=20, batch_size=2, augmentation=False)
 dev_8 = Yolov3Dataloader(file_name='manifest-8.txt', numClass=20, batch_size=8, augmentation=True)
-dev_16 = Yolov3Dataloader(file_name='manifest-16.txt', numClass=20, batch_size=16, shuffle=False, augmentation=False)
+dev_16 = Yolov3Dataloader(file_name='manifest-16.txt', numClass=20, batch_size=16, augmentation=False)
 
 dev_64 = Yolov3Dataloader(file_name='manifest-64.txt', numClass=20, batch_size=16, augmentation=True)
 dev_64_validset = Yolov3Dataloader(file_name='manifest-64-valid.txt', numClass=20, batch_size=16)
@@ -158,35 +164,35 @@ dev_64_validset = Yolov3Dataloader(file_name='manifest-64-valid.txt', numClass=2
 # visualize(image, label, batch_index=0, scale_range=range(3), anchor_range='merge', pred_threshold=0.2, verbose=True)
 # exit(0)
 
-TARGET_TRAIN_DATA = dev_1
+# print("Duplicated 16 batch of one image!")
+TARGET_TRAIN_DATA = train_data_no_augmentation
+# valid_train_data = None
 
-LOG_NAME = "1items-novalid-500epochs-lr0.1-decay0.01"
+LOG_NAME = "v2-allitems-validset-2000epochs-lr0.1-decay0.01"
 
 CHECKPOINT_SAVE_DIR = "D:\\ModelCheckpoints\\2020-yolov3-impl\\"
 LOAD_CHECKPOINT_FILENAME = CHECKPOINT_SAVE_DIR + "20200421-235535-weights.epoch300-loss42.33.hdf5"
 CHECKPOINT_TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-")
 
 GLOBAL_EPOCHS = 2000
-SAVE_PERIOD_SAMPLES = len(TARGET_TRAIN_DATA.image_list) * 2000  # 2000 epoch
+SAVE_PERIOD_SAMPLES = len(TARGET_TRAIN_DATA.image_list) * 10  # 10 epoch
+VERBOSE_LOSS = False
 
 # With BN
-LEARNING_RATE = 0.1
-DECAY_RATE = 1e-2  # ref: 1e-5
+LEARNING_RATE = 0.3
+DECAY_RATE = 5e-2  # ref: 1e-5
 
 # No BN
-# LEARNING_RATE = 1e-5
+# LEARNING_RATE = 3e-5
 # DECAY_RATE = 1e-6  # ref: 1e-5
 
 # No BN, Interactive 1-by-1
 # LEARNING_RATE = 1e-4
 # DECAY_RATE = 1e-5  # ref: 1e-5
 
-thresh1 = 0.2
-thresh2 = 0.2
-
 model = Yolov3Model()
 optimizer = Adam(learning_rate=LEARNING_RATE, decay=DECAY_RATE)
-model.compile(optimizer=optimizer, loss=[CreateYolov3Loss(SCALES[i], i) for i in range(len(SCALES))])
+model.compile(optimizer=optimizer, loss=[CreateYolov3Loss(SCALES[i], i, verbose=VERBOSE_LOSS) for i in range(len(SCALES))])
 
 # model.summary()
 
@@ -224,14 +230,13 @@ early_stopping = EarlyStopping(
     baseline=5e-1
 )
 
-callback_list = None
 if INTERACTIVE_TRAIN:
     callback_list = [model_checkpoint]
 else:
     callback_list = [model_checkpoint, tensor_board]
 
-# force
-callback_list = []
+#! TODO: remove Forced callback code
+# callback_list = []
 
 if MODE_TRAIN:
     if INTERACTIVE_TRAIN:
@@ -239,27 +244,29 @@ if MODE_TRAIN:
         epoch_divide_by = 5
         epoch_iteration = 0
         while epoch_iteration * (GLOBAL_EPOCHS / epoch_divide_by) < GLOBAL_EPOCHS:
+
             # Train <GLOBAL_EPOCHS / epoch_divide_by> epoches
             model.fit(
                 TARGET_TRAIN_DATA,
                 epochs=int(GLOBAL_EPOCHS / epoch_divide_by),
-                # validation_data=valid_train_data,
-                shuffle=False,
+                validation_data=valid_train_data,
+                shuffle=True,
                 callbacks=callback_list,
                 verbose=1
             )
 
             image, gt_label = TARGET_TRAIN_DATA.__getitem__(random.randrange(0, TARGET_TRAIN_DATA.__len__()))
             net_out = model.predict(image)
-            visualize(image, gt_label, net_out, batch_index=0, scale_range=[0], anchor_range='merge', pred_threshold='gtonly', verbose=True)
+            visualize(image, gt_label, net_out, batch_index=0, scale_range=[0, 1, 2],
+                      anchor_range='merge', pred_threshold='gtonly', verbose=True)
 
             epoch_iteration += 1
     else:
         model.fit(
             TARGET_TRAIN_DATA,
             epochs=GLOBAL_EPOCHS,
-            # validation_data=valid_train_data,
-            shuffle=False,
+            validation_data=valid_train_data,
+            shuffle=True,
             callbacks=callback_list,
             verbose=1
         )

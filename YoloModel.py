@@ -3,7 +3,7 @@ from tensorflow.keras.layers import Conv2D, MaxPool2D, GlobalAveragePooling2D, D
     LeakyReLU, Reshape, Flatten, Softmax, Lambda, Concatenate, UpSampling2D, Add, Layer
 
 import tensorflow as tf
-
+import numpy as np
 
 class YoloReshape(Layer):
     def __init__(self, target_shape, **kwargs):
@@ -29,18 +29,30 @@ class YoloReshape(Layer):
         # Boxes -> Sigmoid!
         box = tf.reshape(inputs[..., (C + 1) * A:], shape=(batch_size, S[0], S[1], A, 4))
 
+        class_prob = tf.nn.softmax(class_prob, axis=4)  # Still class probability needs softmax activation
+        box = tf.sigmoid(box)  # YOLOv2 introduces sigmoid to box predicator
+        confidence = tf.sigmoid(confidence)  # YOLOv2 introduces sigmoid to confidence predicator. not in loss fn.
+
+        # scale = tf.shape(inputs)[1]
+        # tf.print("[", scale, "] class_prob:", class_prob[0, 11, 5, 1, :])
+        # tf.print("[", scale, "] class_prob(sum):", tf.reduce_sum(class_prob[0, 11, 5, 1, :]))
+        # tf.print("[", scale, "] box(x, y, w, h):", tf.round(box[0, 9, 4, 2, :] * 100.) / 100.)
+        # tf.print("[", scale, "] box(min, max):", tf.round(tf.reduce_min(box[0, 9, 4, 2, :]) * 100.) / 100., tf.round(tf.reduce_max(box[0, 9, 4, 2, :]) * 100.) / 100.)
+        # tf.print("[", scale, "] confidence:", confidence[0, 9, 4, 2, :])
+
         return tf.concat([
-            tf.nn.softmax(class_prob),  # Still class probability needs softmax activation
-            tf.sigmoid(box),  # YOLOv2 introduces sigmoid to box predicator
-            tf.sigmoid(confidence)   # YOLOv2 introduces sigmoid to confidence predicator. not in loss fn.
+            class_prob,
+            box,
+            confidence
         ], axis=4)
 
 
-def ConvBlock(x, filters, kernel_size, name, strides=(1, 1)):
+def ConvBlock(x, filters, kernel_size, name, strides=(1, 1), final=False):
     x = Conv2D(filters=filters, kernel_size=kernel_size, strides=strides, padding='same', activation=None,
                name=name + '_conv')(x)
     x = BatchNormalization(name=name + '_bn')(x)
-    x = LeakyReLU(alpha=.1, name=name + '_lru')(x)
+    if not final:
+        x = LeakyReLU(alpha=.1, name=name + '_lru')(x)
 
     return x
 
@@ -123,7 +135,7 @@ def Yolov3Model():
     x = DualConvBlock(x, filters=[512, 1024], kernel_size=[1, 3], name='l7_b01_0dcb')
     l7_br1_skip = x = DualConvBlock(x, filters=[512, 1024], kernel_size=[1, 3], name='l7_b01_1dcb')
     x = DualConvBlock(x, filters=[512, 1024], kernel_size=[1, 3], name='l7_b01_2dcb')
-    x = ConvBlock(x, filters=75, kernel_size=1, name='l7_b01_3cb_out0')
+    x = ConvBlock(x, filters=75, kernel_size=1, name='l7_b01_3cb_out0', final=True)
     output_scale_0 = YoloReshape(name='netout_scale13', target_shape=(13, 13, 3, 25))(x)
 
     # L7 - Branch 2 - same, as above.
@@ -133,7 +145,7 @@ def Yolov3Model():
     x = DualConvBlock(x, filters=[256, 512], kernel_size=[1, 3], name='l7_b02_3dcb')
     l7_br2_skip = x = DualConvBlock(x, filters=[256, 512], kernel_size=[1, 3], name='l7_b02_4dcb')
     x = DualConvBlock(x, filters=[256, 512], kernel_size=[1, 3], name='l7_b02_5dcb')
-    x = ConvBlock(x, filters=75, kernel_size=1, name='l7_b02_6cb_out1')
+    x = ConvBlock(x, filters=75, kernel_size=1, name='l7_b02_6cb_out1', final=True)
     output_scale_1 = YoloReshape(name='netout_scale26', target_shape=(26, 26, 3, 25))(x)
 
     # L7 - Branch 3 - same.
@@ -143,7 +155,7 @@ def Yolov3Model():
     x = DualConvBlock(x, filters=[128, 256], kernel_size=[1, 3], name='l07_b03_3dcb')
     x = DualConvBlock(x, filters=[128, 256], kernel_size=[1, 3], name='l07_b03_4dcb')
     x = DualConvBlock(x, filters=[128, 256], kernel_size=[1, 3], name='l07_b03_5dcb')
-    x = ConvBlock(x, filters=75, kernel_size=1, name='l07_b03_6cb_out2')
+    x = ConvBlock(x, filters=75, kernel_size=1, name='l07_b03_6cb_out2', final=True)
     output_scale_2 = YoloReshape(name='netout_scale52', target_shape=(52, 52, 3, 25))(x)
 
     model = Model(inputs=[input], outputs=[output_scale_0, output_scale_1, output_scale_2])
