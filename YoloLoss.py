@@ -19,7 +19,7 @@ def xywh2minmax(xy, wh):
 def iou(pred_mins, pred_maxes, true_mins, true_maxes):
     # pred와 true 각각 최소값 중 큰값
     intersect_mins = K.maximum(pred_mins, true_mins)  # ? * S * S * 3 * 2
-    
+
     # pred와 true 각각 최대값 중 작은값
     intersect_maxes = K.minimum(pred_maxes, true_maxes)  # ? * S * S * 3 * 2
 
@@ -29,7 +29,7 @@ def iou(pred_mins, pred_maxes, true_mins, true_maxes):
 
     # 그 공간에서 w와 h를 곱하면 그 공간의 면적
     intersect_areas = intersect_wh[..., 0] * intersect_wh[..., 1]  # ? * S * S * 3
-    
+
     # pred와 true 각각 wh -> area 순으로 구함
     pred_wh = pred_maxes - pred_mins  # ? * S * S * 3 * 2
     true_wh = true_maxes - true_mins  # ? * S * S * 3 * 2
@@ -109,6 +109,9 @@ def CreateYolov3Loss(scale_size, scale_index):
     scale_index_divider = scale_index + 1
     volume_loss_multiply = 1. / (scale_index_divider * scale_index_divider)  # /1, /4, /9
 
+    # Anchor box
+    anchor_box = ANCHOR_BOXES_TF[:, :, :, scale_index, :, :]
+
     def __loss__(y_true, y_pred):
         label_class = y_true[..., :20]  # ? * S * S * 3 * 20
         label_box = y_true[..., 20:24]  # ? * S * S * 3 * 4
@@ -124,14 +127,12 @@ def CreateYolov3Loss(scale_size, scale_index):
         label_bxby_min, label_bxby_max = xywh2minmax(label_bxby_ext,
                                                      label_bwbh_ext)  # ? * S * S * 3 * 1 * 2, ? * S * S * 3 * 1 * 2
 
-        predict_txty, predict_twth = predict_box[..., :2], predict_box[...,
-                                                           2:4]  # ? * S * S * 3 * 2, ? * S * S * 3 * 2
+        predict_txty, predict_twth = predict_box[..., :2], predict_box[..., 2:4]  # ? * S * S * 3 * 2, ? * S * S * 3 * 2
         predict_bxby = cell_offset_table(scale_size) + (tf.sigmoid(predict_txty) * cell_size)  # ? * S * S * 3 * 2
         predict_bwbh = tf.math.exp(predict_twth) * ANCHOR_BOXES_TF[:, :, :, scale_index, :, :]  # ? * S * S * 3 * 2
         predict_bxby_ext = tf.expand_dims(predict_bxby, 4)  # ? * S * S * 3 * 1 * 2
         predict_bwbh_ext = tf.expand_dims(predict_bwbh, 4)  # ? * S * S * 3 * 1 * 2
-        predict_bxby_min, predict_bxby_max = xywh2minmax(predict_bxby_ext,
-                                                         predict_bwbh_ext)  # ? * S * S * 3 * 1 * 2, ? * S * S * 3 * 1 * 2
+        predict_bxby_min, predict_bxby_max = xywh2minmax(predict_bxby_ext, predict_bwbh_ext)  # ? * S * S * 3 * 1 * 2, ? * S * S * 3 * 1 * 2
 
         iou_scores = iou(predict_bxby_min, predict_bxby_max, label_bxby_min, label_bxby_max)  # ? * S * S * 3 * 1
         iou_scores = iou_scores[..., 0]  # iou_scores의 마지막에 * 1은 의미가 없다... 떼어주자, ? * S * S * 3
@@ -210,17 +211,14 @@ def CreateYolov3Loss(scale_size, scale_index):
         label_bxby, label_bwbh = label_box[..., :2], label_box[..., 2:4]  # ? * S * S * 3 * 2, ? * S * S * 3 * 2
         label_bxby_ext = tf.expand_dims(label_bxby, 4)  # ? * S * S * 3 * 1 * 2
         label_bwbh_ext = tf.expand_dims(label_bwbh, 4)  # ? * S * S * 3 * 1 * 2
-        label_bxby_min, label_bxby_max = xywh2minmax(label_bxby_ext,
-                                                     label_bwbh_ext)  # ? * S * S * 3 * 1 * 2, ? * S * S * 3 * 1 * 2
+        label_bxby_min, label_bxby_max = xywh2minmax(label_bxby_ext, label_bwbh_ext)  # ? * S * S * 3 * 1 * 2, ? * S * S * 3 * 1 * 2
 
-        predict_txty, predict_twth = predict_box[..., :2], predict_box[...,
-                                                           2:4]  # ? * S * S * 3 * 2, ? * S * S * 3 * 2
+        predict_txty, predict_twth = predict_box[..., :2], predict_box[..., 2:4]  # ? * S * S * 3 * 2, ? * S * S * 3 * 2
         predict_bxby = cell_offset_table(scale_size) + (tf.sigmoid(predict_txty) * cell_size)  # ? * S * S * 3 * 2
         predict_bwbh = tf.math.exp(predict_twth) * ANCHOR_BOXES_TF[:, :, :, scale_index, :, :]  # ? * S * S * 3 * 2
         predict_bxby_ext = tf.expand_dims(predict_bxby, 4)  # ? * S * S * 3 * 1 * 2
         predict_bwbh_ext = tf.expand_dims(predict_bwbh, 4)  # ? * S * S * 3 * 1 * 2
-        predict_bxby_min, predict_bxby_max = xywh2minmax(predict_bxby_ext,
-                                                         predict_bwbh_ext)  # ? * S * S * 3 * 1 * 2, ? * S * S * 3 * 1 * 2
+        predict_bxby_min, predict_bxby_max = xywh2minmax(predict_bxby_ext, predict_bwbh_ext)  # ? * S * S * 3 * 1 * 2, ? * S * S * 3 * 1 * 2
 
         iou_scores = iou(predict_bxby_min, predict_bxby_max, label_bxby_min, label_bxby_max)  # ? * S * S * 3 * 1
         iou_scores = iou_scores[..., 0]  # iou_scores의 마지막에 * 1은 의미가 없다... 떼어주자, ? * S * S * 3
@@ -241,14 +239,13 @@ def CreateYolov3Loss(scale_size, scale_index):
         # responsible_mask_ext = K.expand_dims(responsible_mask)  # ? * S * S * 3 * 1 * 1
 
         # Loss 함수 1번
-        # xy_loss = 5 * anchor_mask * responsible_mask * K.square((label_bxby / 416) - (predict_bxby / 416))
-        xy_loss = 5 * anchor_mask * responsible_mask * K.square(label_bxby / cell_size - predict_bxby / cell_size)
+        xy_loss = 5 * anchor_mask * responsible_mask * K.square(label_bxby - predict_bxby)
         box_loss = xy_loss
 
         # tf.print("\n- xy loss:", tf.reduce_sum(xy_loss), output_stream=sys.stdout)
 
         # Loss 함수 2번
-        wh_loss = 5 * anchor_mask * responsible_mask * K.square(K.sqrt(label_bwbh / cell_size) - K.sqrt(predict_bwbh / cell_size))
+        wh_loss = 5 * anchor_mask * responsible_mask * K.square(K.sqrt(label_bwbh) - K.sqrt(predict_bwbh))
         box_loss += wh_loss
 
         # tf.print("- wh loss:", tf.reduce_sum(wh_loss), output_stream=sys.stdout)
@@ -287,12 +284,109 @@ def CreateYolov3Loss(scale_size, scale_index):
 
         return loss
 
+    def __loss_dev_v2__(y_true, y_pred):
+        '''
+        YOLOv3 Loss Function
+        총 3개의 Part로 구성된, Multi-Part Loss이다.
+        1. xywh Loss (Box Loss): 해당 Anchor Cell이 책임지는 박스의 Scale을 예상한 값이다.
+        2. Confidence Loss: 박스가 해당 셀에 실재하는 정도를 예상한 값이다.
+        3. Class Loss: 각 클래스(VOC 총 20개) Probability는 실제 해당 셀의
+                       Class Probability와 동일해야 한다.
+        :param y_true: [B * S * S * 3 * 25]
+        :param y_pred: [B * S * S * 3 * 25]
+        :return: 단일 Floating-Point Value. 이 값으로 전체 Weight를 업데이트한다.
+        '''
+        # tf.print("Anchor box of anchor idx " + str(scale_index) + ": ", anchor_box)
+        pred_class = y_pred[..., :20]
+        pred_bbox = y_pred[..., 20:24]
+        pred_conf = y_pred[..., 24:25]
+
+        label_class = y_true[..., :20]
+        label_bbox = y_true[..., 20:24]
+        label_conf = y_true[..., 24:25]
+
+        # label_object_mask → 1(obj)
+        label_object_mask = label_conf  #!TODO: * iou_between_objects
+        # label_object_mask → 1(noobj)
+        label_no_object_mask = 1 - label_object_mask  #!TODO: Not and label_object_mask
+
+        gt_object_mask = pred_conf
+        gt_no_object_mask = 1 - pred_conf
+
+        # tf.print("label_object_mask:", tf.shape(label_object_mask))
+        # tf.print("label_no_object_mask:", tf.shape(label_no_object_mask))
+        # tf.print("gt_object_mask:", tf.shape(gt_object_mask))
+        # tf.print("gt_no_object_mask:", tf.shape(gt_no_object_mask))
+
+        '''
+        Constants
+        '''
+        lambda_coord = 5
+        lambda_noobj = 0.5
+
+        '''
+        Box Loss
+        '''
+        pred_xy = pred_bbox[..., :2]
+        pred_wh = pred_bbox[..., 2:]
+        label_xy = label_bbox[..., :2]
+        label_wh = label_bbox[..., 2:]
+
+        # tf.print("shape of label_object_mask:", tf.shape(label_object_mask))
+        # tf.print("shape of pred_xy:", tf.shape(pred_xy))
+        # tf.print("shape of label_xy:", tf.shape(label_xy))
+        # tf.print("shape of pred_wh:", tf.shape(pred_wh))
+        # tf.print("shape of label_wh:", tf.shape(label_wh))
+
+        xy_loss = lambda_coord * label_object_mask * tf.square(pred_xy - label_xy)
+        wh_loss = lambda_coord * label_object_mask * tf.square(tf.sqrt(pred_wh) - tf.sqrt(label_wh))
+
+        # tf.print("tf.sqrt(pred_wh):", tf.shape(tf.sqrt(pred_wh)))
+        # tf.print("tf.sqrt(label_wh):", tf.shape(tf.sqrt(label_wh)))
+        # tf.print("xy_loss:", tf.reduce_sum(xy_loss))
+        # tf.print("wh_loss:", tf.reduce_sum(wh_loss))
+
+        box_loss = tf.reduce_sum(xy_loss) + tf.reduce_sum(wh_loss)
+        tf.print("[%d] box_loss:" % scale_size, box_loss)
+
+        '''
+        Confidance Loss
+        '''
+        pred_cell_class_prob = pred_conf * pred_class
+        label_cell_class_prob = label_conf * label_class
+
+        # tf.print("pred_cell_class_prob:", tf.shape(pred_cell_class_prob))
+        # tf.print("label_cell_class_prob:", tf.shape(label_cell_class_prob))
+
+        sqrt_cell_class_prob = tf.square(pred_cell_class_prob - label_cell_class_prob)
+
+        object_loss = label_object_mask * sqrt_cell_class_prob
+        noobj_loss = lambda_noobj * label_no_object_mask * sqrt_cell_class_prob
+        tf.print("object_loss:", tf.reduce_sum(object_loss))
+        tf.print("noobj_loss:", tf.reduce_sum(noobj_loss))
+
+        confidance_loss = tf.reduce_sum(object_loss) + tf.reduce_sum(noobj_loss)
+        tf.print("[%d] confidance_loss:" % scale_size, confidance_loss)
+
+        '''
+        Class Loss
+        [X] 클래스 확률만 봤을때 이상무
+        [X] 클래스 확률 * Confidance 곱해서 볼 때 이상무
+          → Confidance가 어떤 값이든 클래스 확률이 제일 큰 값(chair)을 가져오므로 이상 무
+       '''
+        class_loss = label_object_mask * tf.square(pred_class - label_class)
+        class_loss = tf.reduce_sum(class_loss)
+        tf.print("[%d] class_loss:" % scale_size, class_loss, "\n")
+
+        return box_loss + confidance_loss + class_loss
+
+
     def __dummy__(y_true, y_pred):
         tf.print("y_true shape: ", tf.shape(y_true))
         tf.print("y_pred shape: ", tf.shape(y_pred))
 
         return tf.reduce_mean(y_pred)
 
-    return __loss_dev__
+    return __loss_dev_v2__
     # return __dummy__
 

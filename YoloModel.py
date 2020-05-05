@@ -4,6 +4,7 @@ from tensorflow.keras.layers import Conv2D, MaxPool2D, GlobalAveragePooling2D, D
 
 import tensorflow as tf
 
+
 class YoloReshape(Layer):
     def __init__(self, target_shape, **kwargs):
         super(YoloReshape, self).__init__(**kwargs)
@@ -30,16 +31,15 @@ class YoloReshape(Layer):
 
         return tf.concat([
             tf.nn.softmax(class_prob),  # Still class probability needs softmax activation
-            box,  # YOLOv2 introduces sigmoid to box predicator
+            tf.sigmoid(box),  # YOLOv2 introduces sigmoid to box predicator
             tf.sigmoid(confidence)   # YOLOv2 introduces sigmoid to confidence predicator. not in loss fn.
         ], axis=4)
-
 
 
 def ConvBlock(x, filters, kernel_size, name, strides=(1, 1)):
     x = Conv2D(filters=filters, kernel_size=kernel_size, strides=strides, padding='same', activation=None,
                name=name + '_conv')(x)
-    # x = BatchNormalization(name=name + '_bn')(x)
+    x = BatchNormalization(name=name + '_bn')(x)
     x = LeakyReLU(alpha=.1, name=name + '_lru')(x)
 
     return x

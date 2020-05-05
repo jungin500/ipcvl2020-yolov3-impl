@@ -223,7 +223,6 @@ class Yolov3Dataloader(utils.Sequence):
         f = open(label_path, 'r')
         label = np.zeros((label_scale, label_scale, 3, 25), dtype=np.float32)
         raw_label = []
-        size = 416
         while True:
             line = f.readline()
             if not line: break
@@ -231,25 +230,30 @@ class Yolov3Dataloader(utils.Sequence):
             split_line = line.split()
             c, x, y, w, h = split_line
 
-            x = float(x) * size
-            y = float(y) * size
-            w = float(w) * size
-            h = float(h) * size
+            x = float(x)  # global-relative x, y
+            y = float(y)
+            w = float(w)  # global-relative w, h
+            h = float(h)
             c = int(c)
 
             anchor_idx = get_best_iou_anchor_idx(w, h, scale_index)
             scale_factor = (1 / label_scale)
 
             # // : 몫
-            grid_x_index = int((x / size) // scale_factor)
-            grid_y_index = int((y / size) // scale_factor)
+            grid_x_index = int(x // scale_factor)
+            grid_y_index = int(y // scale_factor)
+
+            # x와 y는 해당 grid cell-relative value이다.
+            cell_relative_x, cell_relative_y = (x * label_scale, y * label_scale)
+            cell_relative_x, cell_relative_y = \
+                (cell_relative_x - int(cell_relative_x), cell_relative_y - int(cell_relative_y))
 
             # 레이블은 하나만 지정한다.
             # 같은 Cell에 두 개 이상의 레이블이 들어가게 되면,
             # 하나의 객체만 사용한다.
             if label[grid_y_index][grid_x_index][anchor_idx][c] == 0.:
                 label[grid_y_index][grid_x_index][anchor_idx][c] = 1.
-                label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([x, y, w, h, 1])
+                label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([cell_relative_x, cell_relative_y, w, h, 1])
 
                 raw_label.append(np.array([
                     x - w / 2,
