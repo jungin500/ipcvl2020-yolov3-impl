@@ -121,6 +121,8 @@ def CreateYolov3Loss(scale_size, scale_index, verbose=False):
     scale_index_divider = scale_index + 1
     volume_loss_multiply = 1. / (scale_index_divider * scale_index_divider)  # /1, /4, /9
 
+    image_size = 416
+
     # Anchor box
     anchor_box = get_anchor_box(scale_index)
 
@@ -254,13 +256,13 @@ def CreateYolov3Loss(scale_size, scale_index, verbose=False):
         xy_loss = 5 * anchor_mask * responsible_mask * K.square(label_bxby - predict_bxby)
         box_loss = xy_loss
 
-        # if verbose: tf.print("\n- xy loss:", tf.reduce_sum(xy_loss), output_stream=sys.stdout)
+        if verbose: tf.print("\n- [%d] xy loss:" % scale_index, tf.reduce_sum(xy_loss), output_stream=sys.stdout)
 
         # Loss 함수 2번
         wh_loss = 5 * anchor_mask * responsible_mask * K.square(K.sqrt(label_bwbh) - K.sqrt(predict_bwbh))
         box_loss += wh_loss
 
-        # if verbose: tf.print("- wh loss:", tf.reduce_sum(wh_loss), output_stream=sys.stdout)
+        if verbose: tf.print("- [%d] wh loss:" % scale_index, tf.reduce_sum(wh_loss), output_stream=sys.stdout)
 
         # 1번+2번 총합
         box_loss = K.sum(box_loss) * volume_loss_multiply
@@ -290,7 +292,7 @@ def CreateYolov3Loss(scale_size, scale_index, verbose=False):
         loss = box_loss + confidence_loss + class_loss
         # loss = box_loss + confidence_loss
 
-        if verbose: tf.print("\n- [%d] confidence_loss:" % scale_index, confidence_loss, output_stream=sys.stdout)
+        if verbose: tf.print("- [%d] confidence_loss:" % scale_index, confidence_loss, output_stream=sys.stdout)
         if verbose: tf.print("- [%d] class_loss:" % scale_index, class_loss, output_stream=sys.stdout)
         if verbose: tf.print("- [%d] box_loss:" % scale_index, box_loss, output_stream=sys.stdout)
 
@@ -298,7 +300,7 @@ def CreateYolov3Loss(scale_size, scale_index, verbose=False):
 
     def __loss_dev_v2__(y_true, y_pred):
         '''
-        YOLOv3 Loss Function
+        YOLOv1 Loss Function
         총 3개의 Part로 구성된, Multi-Part Loss이다.
         1. xywh Loss (Box Loss): 해당 Anchor Cell이 책임지는 박스의 Scale을 예상한 값이다.
         2. Confidence Loss: 박스가 해당 셀에 실재하는 정도를 예상한 값이다.
@@ -313,7 +315,7 @@ def CreateYolov3Loss(scale_size, scale_index, verbose=False):
         # TODO e.g. 시그모이드 함수, Anchor 값들 활용 등 ....
         pred_class = y_pred[..., :20]
         pred_bbox = y_pred[..., 20:24]
-        pred_conf = y_pred[..., 24:25]
+        pred_conf = y_pred[..., 24:25]  # 모델에서 sigmoid를 씌워서 나온다
 
         label_class = y_true[..., :20]
         label_bbox = y_true[..., 20:24]
@@ -333,6 +335,135 @@ def CreateYolov3Loss(scale_size, scale_index, verbose=False):
         pred_bbox_xy_min = pred_bbox_xy_glr - (pred_bbox_wh / 2)
         pred_bbox_xy_max = pred_bbox_xy_glr + (pred_bbox_wh / 2)
         pred_volume = pred_bbox_wh[..., 0] * pred_bbox_wh[..., 1]
+
+        label_bbox_xy_min = label_bbox_xy_glr - (label_bbox_wh / 2)
+        label_bbox_xy_max = label_bbox_xy_glr + (label_bbox_wh / 2)
+        label_volume = label_bbox_wh[..., 0] * label_bbox_wh[..., 1]
+
+        intersact_min = tf.maximum(pred_bbox_xy_min, label_bbox_xy_min)
+        intersact_max = tf.minimum(pred_bbox_xy_max, label_bbox_xy_max)
+        intersact_wh = tf.maximum(intersact_max - intersact_min, 0)  # clip to zero
+        intersact_volume = intersact_wh[..., 0] * intersact_wh[..., 1]
+
+        union_volume = pred_volume + label_volume - intersact_volume
+        iou_volume = intersact_volume / union_volume
+        max_iou_anchor_idx = tf.argmax(iou_volume, axis=3)
+        max_iou_anchor_mask = tf.one_hot(max_iou_anchor_idx, depth=3, dtype=tf.float32)
+        max_iou_anchor_mask = tf.expand_dims(max_iou_anchor_mask, axis=4)  # B * S * S * 3 * 1
+
+        # if verbose: tf.print("max_iou_anchor_idx:", tf.shape(max_iou_anchor_idx))
+        # if verbose: tf.print("max_iou_anchor_mask:", tf.shape(max_iou_anchor_mask))
+        # if verbose: tf.print("iou_volume:", tf.shape(iou_volume))
+        # if verbose: tf.print("max_iou_anchor_value:", tf.shape(max_iou_anchor_value))
+
+        # 1(obj)
+        # object_responsible_mask = tf.cast(pred_conf >= .2, dtype=tf.float32) * max_iou_anchor_mask
+        object_responsible_mask = label_conf * max_iou_anchor_mask
+        # 1(noobj)
+        no_object_responsible_mask = 1 - object_responsible_mask
+
+        if verbose: tf.print("object_responsible_mask:", tf.shape(object_responsible_mask))
+        if verbose: tf.print("no_object_responsible_mask:", tf.shape(no_object_responsible_mask))
+
+        '''
+        Constants
+        '''
+        lambda_coord = 5
+        lambda_noobj = 0.5
+
+        '''
+        Box Loss
+        '''
+        pred_xy = pred_bbox[..., :2]
+        pred_wh = pred_bbox[..., 2:]
+        label_xy = label_bbox[..., :2]
+        label_wh = label_bbox[..., 2:]
+
+        # if verbose: tf.print("shape of label_object_mask:", tf.shape(label_object_mask))
+        # if verbose: tf.print("shape of pred_xy:", tf.shape(pred_xy))
+        # if verbose: tf.print("shape of label_xy:", tf.shape(label_xy))
+        # if verbose: tf.print("shape of pred_wh:", tf.shape(pred_wh))
+        # if verbose: tf.print("shape of label_wh:", tf.shape(label_wh))
+
+        xy_loss = lambda_coord * object_responsible_mask * tf.square(pred_xy - label_xy)
+        wh_loss = lambda_coord * object_responsible_mask * tf.square(tf.sqrt(pred_wh) - tf.sqrt(label_wh))
+
+        # if verbose: tf.print("tf.sqrt(pred_wh):", tf.shape(tf.sqrt(pred_wh)))
+        # if verbose: tf.print("tf.sqrt(label_wh):", tf.shape(tf.sqrt(label_wh)))
+        # if verbose: tf.print("xy_loss:", tf.reduce_sum(xy_loss))
+        # if verbose: tf.print("wh_loss:", tf.reduce_sum(wh_loss))
+
+        box_loss = tf.reduce_sum(xy_loss) + tf.reduce_sum(wh_loss)
+        if verbose: tf.print("[%d] box_loss:" % scale_size, box_loss)
+
+        '''
+        Confidence Loss
+        '''
+        pred_cell_class_prob = pred_conf * pred_class
+        label_cell_class_prob = label_conf * label_class
+
+        # if verbose: tf.print("pred_cell_class_prob:", tf.shape(pred_cell_class_prob))
+        # if verbose: tf.print("label_cell_class_prob:", tf.shape(label_cell_class_prob))
+
+        sqrt_cell_class_prob = tf.square(pred_cell_class_prob - label_cell_class_prob)
+
+        object_loss = object_responsible_mask * sqrt_cell_class_prob
+        noobj_loss = lambda_noobj * no_object_responsible_mask * sqrt_cell_class_prob
+        if verbose: tf.print("object_loss:", tf.reduce_sum(object_loss))
+        if verbose: tf.print("noobj_loss:", tf.reduce_sum(noobj_loss))
+
+        confidence_loss = tf.reduce_sum(object_loss) + tf.reduce_sum(noobj_loss)
+        if verbose: tf.print("[%d] confidence_loss:" % scale_size, confidence_loss)
+
+        '''
+        Class Loss
+        [X] 클래스 확률만 봤을때 이상무
+        [X] 클래스 확률 * confidence 곱해서 볼 때 이상무
+          → confidence가 어떤 값이든 클래스 확률이 제일 큰 값(chair)을 가져오므로 이상 무
+       '''
+        class_loss = object_responsible_mask * tf.square(pred_class - label_class)
+        class_loss = tf.reduce_sum(class_loss)
+        if verbose: tf.print("[%d] class_loss:" % scale_size, class_loss, "\n")
+
+        return box_loss + confidence_loss + class_loss
+
+    def __loss_dev_v3__(y_true, y_pred):
+        '''
+        YOLOv3 Loss Function
+        총 3개의 Part로 구성된, Multi-Part Loss이다.
+        1. xywh Loss (Box Loss): 해당 Anchor Cell이 책임지는 박스의 Scale을 예상한 값이다.
+        2. Confidence Loss: 박스가 해당 셀에 실재하는 정도를 예상한 값이다.
+        3. Class Loss: 각 클래스(VOC 총 20개) Probability는 실제 해당 셀의
+                       Class Probability와 동일해야 한다.
+        :param y_true: [B * S * S * 3 * 25]
+        :param y_pred: [B * S * S * 3 * 25]
+        :return: 단일 Floating-Point Value. 이 값으로 전체 Weight를 업데이트한다.
+        '''
+        # if verbose: tf.print("Anchor box of anchor idx " + str(scale_index) + ": ", anchor_box)
+        pred_class = y_pred[..., :20]
+        pred_bbox = y_pred[..., 20:24]
+        pred_conf = y_pred[..., 24:25]
+
+        label_class = y_true[..., :20]
+        label_bbox = y_true[..., 20:24]
+        label_conf = y_true[..., 24:25]
+
+        # Create IOU between two bboxes
+        # Convert cell-relative xy to global-relative xy (glr)
+        index_matrix = generate_index_matrix(scale_size)
+
+        pred_bbox_xy_glr = (tf.sigmoid(pred_bbox[..., :2]) + index_matrix) / scale_size  # normalized from 0.0 to 1.0
+        pred_bbox_wh_glr = (anchor_box * tf.exp(pred_bbox[..., 2:])) / image_size
+        #! Sigmoid of t_o goes to YoloModel
+
+        label_bbox_xy_glr = (label_bbox[..., :2] + index_matrix) / scale_size
+        label_bbox_wh = label_bbox[..., 2:]
+
+        # if verbose: tf.print("pred_bbox_xy_glr[0, 0]:", pred_bbox_xy_glr[0, 0, 0, 0, :] * scale_size)
+        # if verbose: tf.print("label_bbox_xy_glr[12, 12]:", label_bbox_xy_glr[0, 12, 12, 2, :] * scale_size)
+        pred_bbox_xy_min = pred_bbox_xy_glr - (pred_bbox_wh_glr / 2)
+        pred_bbox_xy_max = pred_bbox_xy_glr + (pred_bbox_wh_glr / 2)
+        pred_volume = pred_bbox_wh_glr[..., 0] * pred_bbox_wh_glr[..., 1]
 
         label_bbox_xy_min = label_bbox_xy_glr - (label_bbox_wh / 2)
         label_bbox_xy_max = label_bbox_xy_glr + (label_bbox_wh / 2)
@@ -376,19 +507,15 @@ def CreateYolov3Loss(scale_size, scale_index, verbose=False):
         '''
         Box Loss
         '''
-        pred_xy = pred_bbox[..., :2]
-        pred_wh = pred_bbox[..., 2:]
-        label_xy = label_bbox[..., :2]
-        label_wh = label_bbox[..., 2:]
-
         # if verbose: tf.print("shape of label_object_mask:", tf.shape(label_object_mask))
-        # if verbose: tf.print("shape of pred_xy:", tf.shape(pred_xy))
+        # if verbose: tf.print("s hape of pred_xy:", tf.shape(pred_xy))
         # if verbose: tf.print("shape of label_xy:", tf.shape(label_xy))
         # if verbose: tf.print("shape of pred_wh:", tf.shape(pred_wh))
         # if verbose: tf.print("shape of label_wh:", tf.shape(label_wh))
+        box_scale = label_bbox[..., 2:3] * label_bbox[..., 3:4]
 
-        xy_loss = lambda_coord * label_object_mask * tf.square(pred_xy - label_xy)
-        wh_loss = lambda_coord * label_object_mask * tf.square(tf.sqrt(pred_wh) - tf.sqrt(label_wh))
+        xy_loss = lambda_coord * box_scale * label_object_mask * tf.square(pred_bbox_xy_glr - label_bbox_xy_glr)
+        wh_loss = lambda_coord * box_scale * label_object_mask * tf.square(tf.sqrt(pred_bbox_wh_glr) - tf.sqrt(label_bbox_wh))
 
         # if verbose: tf.print("tf.sqrt(pred_wh):", tf.shape(tf.sqrt(pred_wh)))
         # if verbose: tf.print("tf.sqrt(label_wh):", tf.shape(tf.sqrt(label_wh)))
@@ -436,6 +563,6 @@ def CreateYolov3Loss(scale_size, scale_index, verbose=False):
 
         return tf.reduce_mean(y_pred)
 
-    return __loss_dev_v2__
+    return __loss_dev_v3__
     # return __dummy__
 

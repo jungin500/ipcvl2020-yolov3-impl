@@ -30,7 +30,7 @@ class YoloReshape(Layer):
         box = tf.reshape(inputs[..., (C + 1) * A:], shape=(batch_size, S[0], S[1], A, 4))
 
         class_prob = tf.nn.softmax(class_prob, axis=4)  # Still class probability needs softmax activation
-        box = tf.sigmoid(box)  # YOLOv2 introduces sigmoid to box predicator
+        # box = tf.sigmoid(box)  # YOLOv2 introduces sigmoid to box predicator -> not in model, but inside loss fn.
         confidence = tf.sigmoid(confidence)  # YOLOv2 introduces sigmoid to confidence predicator. not in loss fn.
 
         # scale = tf.shape(inputs)[1]
@@ -52,7 +52,8 @@ def ConvBlock(x, filters, kernel_size, name, strides=(1, 1), final=False):
                name=name + '_conv')(x)
     x = BatchNormalization(name=name + '_bn')(x)
     if not final:
-        x = LeakyReLU(alpha=.1, name=name + '_lru')(x)
+        # x = LeakyReLU(alpha=.1, name=name + '_lru')(x)
+        x = tf.sigmoid(x, name=name + '_sigmoid')
 
     return x
 
