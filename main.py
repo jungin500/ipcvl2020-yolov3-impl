@@ -1,7 +1,6 @@
 # INFO까지의 로그 Suppress하기
 import datetime
 import os.path
-import random
 import numpy as np
 from PIL import Image, ImageDraw
 
@@ -12,9 +11,11 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import Lambda
 from YoloLoss import CreateYolov3Loss, SCALES, generate_index_matrix, get_anchor_box
 from YoloModel import Yolov3Model
+from YoloMetrics import *
 from DataGenerator import Yolov3Dataloader
 
 import tensorflow as tf
+import argparse
 
 # Read class list from file
 class_list = []
@@ -23,6 +24,18 @@ with open('voc.names', 'r') as f:
         line = f.readline()
         if not line: break
         class_list.append(line)
+
+
+def get_list_length(list_file_name):
+    list_length = 0
+    with open(list_file_name, "r") as f:
+        while True:
+            line = f.readline   ()
+            if not line: break
+            list_length += 1
+
+    return list_length
+
 
 def visualize(image, gt_label, out_label=None, batch_range=[0], scale_range=range(3), anchor_range=range(3), pred_threshold=0.2, verbose=False):
     anchor_merge = False
@@ -38,6 +51,10 @@ def visualize(image, gt_label, out_label=None, batch_range=[0], scale_range=rang
     image_size = 416
 
     for batch_index in batch_range:
+        if image[0].shape[0] <= batch_index:
+            print("!! Batch index too large: ", str(batch_index))
+            continue
+
         for scale_id in scale_range:
             scale_size = SCALES[scale_id]
 
@@ -63,6 +80,16 @@ def visualize(image, gt_label, out_label=None, batch_range=[0], scale_range=rang
 
                         # for GT values
                         if raw_gt_label[y, x, a, 24] == 1.:
+                            # Responsible Cell
+                            r_xmin, r_xmax = (width_block * x, width_block * (x + 1))
+                            r_ymin, r_ymax = (height_block * y, height_block * (y + 1))
+
+                            transparant_pil = Image.new('RGBA', (416, 416))
+                            image_pil_draw = ImageDraw.Draw(transparant_pil)
+                            image_pil_draw.rectangle([r_xmin, r_ymin, r_xmax, r_ymax], fill=(255, 0, 0, 150))
+                            image_pil_draw.text([r_xmin + 2, r_ymin + 2], text='R', fill='black')
+                            image_pil.paste(transparant_pil, mask=transparant_pil)
+
                             # GT Image BBox
                             global_relative_xy = (raw_gt_label[y, x, a, 20:22] + np.array([x, y])) / np.array([width, height])
                             gt_xmin, gt_ymin = (global_relative_xy - (raw_gt_label[y, x, a, 22:24] / 2)) * image_size
@@ -75,15 +102,6 @@ def visualize(image, gt_label, out_label=None, batch_range=[0], scale_range=rang
                             image_pil_draw.text([gt_xmin + 4, gt_ymin + 2], text='O', fill='white')
                             image_pil.paste(transparant_pil, mask=transparant_pil)
 
-                            # Responsible Cell
-                            r_xmin, r_xmax = (width_block * x, width_block * (x + 1))
-                            r_ymin, r_ymax = (height_block * y, height_block * (y + 1))
-
-                            transparant_pil = Image.new('RGBA', (416, 416))
-                            image_pil_draw = ImageDraw.Draw(transparant_pil)
-                            image_pil_draw.rectangle([r_xmin, r_ymin, r_xmax, r_ymax], fill=(255, 0, 0, 150))
-                            image_pil_draw.text([r_xmin + 2, r_ymin + 2], text='R', fill='black')
-                            image_pil.paste(transparant_pil, mask=transparant_pil)
                         elif not anchor_merge or (anchor_merge and a == 0):
                             # Just draw grid box
                             r_xmin, r_xmax = (width_block * x, width_block * (x + 1))
@@ -147,141 +165,141 @@ def visualize(image, gt_label, out_label=None, batch_range=[0], scale_range=rang
             if anchor_merge:
                 image_pil.show()
 
+def __main__(args):
+    import random
 
-MODE_TRAIN = True
-INTERACTIVE_TRAIN = False
-LOAD_WEIGHT = False
+    MODE_TRAIN = args.train
+    INTERACTIVE_TRAIN = args.interactive
+    LOAD_WEIGHT = True if args.weight_file is not None else False
 
-#! TODO Test augmented result
-train_data = Yolov3Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=8, augmentation=True)
-train_data_no_augmentation = Yolov3Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=16,
-                                              augmentation=False)
-valid_train_data = Yolov3Dataloader(file_name='manifest-valid.txt', numClass=20, batch_size=16)
-test_data = Yolov3Dataloader(file_name='manifest-test.txt', numClass=20, batch_size=2)
+    train_data = Yolov3Dataloader(file_name=args.manifest_train, numClass=20, batch_size=args.batch_size,
+                                  augmentation=args.augmentation, verbose=True if args.verbosity > 1 else False)
+    valid_train_data = None
+    if args.manifest_valid is not None:
+        valid_train_data = Yolov3Dataloader(file_name=args.manifest_valid, numClass=20, batch_size=args.batch_size)
+    # test_data = Yolov3Dataloader(file_name='manifest-test.txt', numClass=20, batch_size=2)
 
-dev_1 = Yolov3Dataloader(file_name='manifest-1-v2.txt', numClass=20, batch_size=1, augmentation=False, verbose=False)
-dev_1_dupe16 = Yolov3Dataloader(file_name='manifest-1-dupe16.txt', numClass=20, batch_size=16, augmentation=False)
-dev_2 = Yolov3Dataloader(file_name='manifest-2.txt', numClass=20, batch_size=2, augmentation=False)
-dev_8 = Yolov3Dataloader(file_name='manifest-8.txt', numClass=20, batch_size=8, augmentation=True)
-dev_16 = Yolov3Dataloader(file_name='manifest-16.txt', numClass=20, batch_size=16, augmentation=False)
+    LOG_NAME = datetime.datetime.now().strftime("%Y%m%d\\%H%M%S-") + "%s-%s-%depochs-lr%f-%s" % (
+        str(get_list_length(args.manifest_train)) + "item",
+        "novalid" if args.manifest_valid is None else "valid",
+        args.epoches,
+        args.learning_rate,
+        "augm" if args.augmentation else "noaugm"
+    )
 
-dev_64 = Yolov3Dataloader(file_name='manifest-64.txt', numClass=20, batch_size=16, augmentation=True)
-dev_64_validset = Yolov3Dataloader(file_name='manifest-64-valid.txt', numClass=20, batch_size=16)
+    CHECKPOINT_SAVE_DIR = "D:\\ModelCheckpoints\\2020-yolov3-impl\\"
+    LOAD_CHECKPOINT_FILENAME = CHECKPOINT_SAVE_DIR + "20200518-150343-weights.epoch400-loss20.38.hdf5"
+    CHECKPOINT_TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-")
 
-# image, label = dev_1.__getitem__(0)
-# visualize(image, label, batch_range=0, scale_range=range(3), anchor_range='merge', pred_threshold=0.2, verbose=True)
-# exit(0)
+    GLOBAL_EPOCHS = args.epoches
+    SAVE_PERIOD_SAMPLES = len(train_data.image_list) * 10  # 10 epoches
+    VERBOSE_LOSS = True if args.verbosity > 0 else False
 
-# print("Duplicated 16 batch of one image!")
-TARGET_TRAIN_DATA = dev_1
-valid_train_data = None
+    # References
+    LEARNING_RATE = args.learning_rate
+    DECAY_RATE = LEARNING_RATE * 0.01
+    
+    model = Yolov3Model()
+    optimizer = Adam(learning_rate=LEARNING_RATE, decay=DECAY_RATE)
+    # optimizer = Adam(learning_rate=LEARNING_RATE)
+    model.compile(
+        optimizer=optimizer,
+        loss=[CreateYolov3Loss(SCALES[i], i, verbose=VERBOSE_LOSS) for i in range(len(SCALES))],
+        # metrics=[YoloMetric()]
+    )
 
-LOG_NAME = "v2.1-2items-validset-2000epochs-lr0.1-decay0.01"
+    # model.summary()
 
-CHECKPOINT_SAVE_DIR = "D:\\ModelCheckpoints\\2020-yolov3-impl\\"
-LOAD_CHECKPOINT_FILENAME = CHECKPOINT_SAVE_DIR + "20200505-191622-weights.epoch80-loss261.60.hdf5"
-CHECKPOINT_TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-")
+    if args.save_weight:
+        print("Save frequency is {} sample, batch_size={}.".format(SAVE_PERIOD_SAMPLES, train_data.batch_size))
 
-GLOBAL_EPOCHS = 50
-SAVE_PERIOD_SAMPLES = len(TARGET_TRAIN_DATA.image_list) * 2000  # 20 epoch
-VERBOSE_LOSS = True
+    if LOAD_WEIGHT and (LOAD_CHECKPOINT_FILENAME is not None):
+        model.load_weights(LOAD_CHECKPOINT_FILENAME)
 
-# References
-LEARNING_RATE = 1e-3
+    model_checkpoint = ModelCheckpoint(
+        CHECKPOINT_SAVE_DIR + CHECKPOINT_TIMESTAMP + 'weights.epoch{epoch:02d}-loss{loss:.2f}.hdf5',  # 'weights.epoch{epoch:02d}-loss{loss:.2f}-validloss{val_loss:.2f}.hdf5'
+        save_best_only=False,
+        save_weights_only=True,
+        # monitor='loss',
+        # mode='min',
+        # save_freq=save_frequency
+        save_freq=SAVE_PERIOD_SAMPLES
+    )
 
-# With BN
-# LEARNING_RATE = 5e-1
-# DECAY_RATE = 1e-3
+    tensor_board = TensorBoard(
+        log_dir="logs\\" + LOG_NAME,
+        write_graph=True,
+        update_freq=1,
+        profile_batch=0
+    )
 
-# No BN
-# LEARNING_RATE = 3e-5
-# DECAY_RATE = 1e-6  # ref: 1e-5
+    early_stopping = EarlyStopping(
+        monitor='loss',
+        patience=10,
+        baseline=5e-1
+    )
 
-# No BN, Interactive 1-by-1
-# LEARNING_RATE = 1e-4
-# DECAY_RATE = 1e-5  # ref: 1e-5
+    callback_list = []
 
-model = Yolov3Model()
-# optimizer = Adam(learning_rate=LEARNING_RATE, decay=DECAY_RATE)
-optimizer = Adam(learning_rate=LEARNING_RATE)
-model.compile(optimizer=optimizer, loss=[CreateYolov3Loss(SCALES[i], i, verbose=VERBOSE_LOSS) for i in range(len(SCALES))])
+    if not INTERACTIVE_TRAIN:
+        callback_list += [tensor_board]
 
-# model.summary()
+    if args.save_weight:
+        callback_list += [model_checkpoint]
 
-save_frequency_raw = SAVE_PERIOD_SAMPLES
-print("Save frequency is {} sample, batch_size={}.".format(save_frequency_raw, TARGET_TRAIN_DATA.batch_size))
+    if MODE_TRAIN:
+        if INTERACTIVE_TRAIN:
 
-if LOAD_WEIGHT and (LOAD_CHECKPOINT_FILENAME is not None):
-    model.load_weights(LOAD_CHECKPOINT_FILENAME)
+            epoch_divide_by = 5
+            epoch_iteration = 0
+            while epoch_iteration * (GLOBAL_EPOCHS / epoch_divide_by) < GLOBAL_EPOCHS:
 
-model_checkpoint = ModelCheckpoint(
-    CHECKPOINT_SAVE_DIR + CHECKPOINT_TIMESTAMP + 'weights.epoch{epoch:02d}-loss{loss:.2f}.hdf5',  # 'weights.epoch{epoch:02d}-loss{loss:.2f}-validloss{val_loss:.2f}.hdf5'
-    save_best_only=False,
-    save_weights_only=True,
-    # monitor='loss',
-    # mode='min',
-    # save_freq=save_frequency
-    save_freq=save_frequency_raw
-)
+                # Train <GLOBAL_EPOCHS / epoch_divide_by> epoches
+                model.fit(
+                    train_data,
+                    epochs=int(GLOBAL_EPOCHS / epoch_divide_by),
+                    validation_data=valid_train_data,
+                    shuffle=True,
+                    callbacks=callback_list,
+                    verbose=1
+                )
 
-tensor_board = TensorBoard(
-    log_dir="logs\\" + datetime.datetime.now().strftime("%Y%m%d\\%H%M%S-") + LOG_NAME,
-    write_graph=True,
-    update_freq=1,
-    profile_batch=0
-)
+                image, gt_label = train_data.__getitem__(random.randrange(0, train_data.__len__()))
+                net_out = model.predict(image)
+                visualize(image, gt_label, net_out, batch_range=[0], scale_range=[0, 1, 2],
+                          anchor_range='merge', pred_threshold=0.5, verbose=True)
 
-early_stopping = EarlyStopping(
-    monitor='loss',
-    patience=10,
-    baseline=5e-1
-)
-
-if INTERACTIVE_TRAIN:
-    callback_list = [model_checkpoint]
-else:
-    callback_list = [model_checkpoint, tensor_board]
-
-#! TODO: remove Forced callback code
-callback_list = []
-
-if MODE_TRAIN:
-    if INTERACTIVE_TRAIN:
-
-        epoch_divide_by = 5
-        epoch_iteration = 0
-        while epoch_iteration * (GLOBAL_EPOCHS / epoch_divide_by) < GLOBAL_EPOCHS:
-
-            # Train <GLOBAL_EPOCHS / epoch_divide_by> epoches
+                epoch_iteration += 1
+        else:
             model.fit(
-                TARGET_TRAIN_DATA,
-                epochs=int(GLOBAL_EPOCHS / epoch_divide_by),
+                train_data,
+                epochs=GLOBAL_EPOCHS,
                 validation_data=valid_train_data,
                 shuffle=True,
                 callbacks=callback_list,
                 verbose=1
             )
-
-            image, gt_label = TARGET_TRAIN_DATA.__getitem__(random.randrange(0, TARGET_TRAIN_DATA.__len__()))
-            net_out = model.predict(image)
-            visualize(image, gt_label, net_out, batch_range=[0, 1], scale_range=[0, 1, 2],
-                      anchor_range='merge', pred_threshold=0.2, verbose=True)
-
-            epoch_iteration += 1
     else:
-        model.fit(
-            TARGET_TRAIN_DATA,
-            epochs=GLOBAL_EPOCHS,
-            validation_data=valid_train_data,
-            shuffle=True,
-            callbacks=callback_list,
-            verbose=1
-        )
-else:
-    import random
+        import random
 
-    data_iterations = 1
-    for _ in range(data_iterations):
-        image, gt_label = TARGET_TRAIN_DATA.__getitem__(random.randrange(0, TARGET_TRAIN_DATA.__len__()))
-        net_out = model.predict(image)
-        visualize(image, gt_label, net_out, batch_range=[0, 1], scale_range=[0], anchor_range='merge', pred_threshold=0.2)
+        data_iterations = 1
+        for _ in range(data_iterations):
+            image, gt_label = train_data.__getitem__(random.randrange(0, train_data.__len__()))
+            net_out = model.predict(image)
+            visualize(image, gt_label, net_out, batch_range=[0, 1], scale_range=[0], anchor_range='merge', pred_threshold=0.2)
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="YOLOv3 Trainer")
+    parser.add_argument('--manifest-train', dest='manifest_train', default='manifest-train.txt', type=str, help='Trainset manifests (Default: manifest-train.txt)')
+    parser.add_argument('--manifest-valid', dest='manifest_valid', default=None, type=str, help='Validset manifests (Default: None)')
+    parser.add_argument('--augmentation', dest='augmentation', default=False, action='store_true', help='Enable augmentation')
+    parser.add_argument('-t', dest='train', default=True, action='store_true', help='Train Mode (Default: True)')
+    parser.add_argument('-b', dest='batch_size', type=int, default=16, help='Batch size (Default: 16)')
+    parser.add_argument('-e', dest='epoches', type=int, default=200, help='Epoches ( /5 if interactive ) (Default: 200)')
+    parser.add_argument('-l', dest='learning_rate', type=float, default=1e-5, help='Learnig rate (Default: 1e-5)')
+    parser.add_argument('-i', dest='interactive', default=False, action='store_true', help='Interactive Mode - display results every /5 epoches (Default: False)')
+    parser.add_argument('-w', dest='weight_file', type=str, help='(Optional) Weight file to load (Default: None)')
+    parser.add_argument('-v', dest='verbosity', type=int, default=0, help='Verbosity (0: None, 1: Loss verb, 2: Loss+DataLoader verb)')
+    parser.add_argument('-s', dest='save_weight', default=False, action='store_true',
+                        help='Save weight to file every 10 epoches')
+    __main__(parser.parse_args())

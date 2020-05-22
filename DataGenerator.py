@@ -33,30 +33,44 @@ class Labeler():
 
 # Necessary directives
 ANCHOR_BOXES_NP = np.array(ANCHOR_BOXES).reshape((-1, 3, 2))
+ANCHOR_BOXES_ALLANCHOR = np.array(ANCHOR_BOXES).reshape((-1, 2))
 
 
-def get_best_iou_anchor_idx(width, height, scale_index):
-    height_ratios = (ANCHOR_BOXES_NP[scale_index] / np.reshape(ANCHOR_BOXES_NP[scale_index, :, 0], (-1, 1)))[:, 1]
-    current_heights = np.tile(height / width, np.shape(ANCHOR_BOXES_NP)[0])
+# def get_best_iou_anchor_idx(width, height, scale_index):
+#     height_ratios = (ANCHOR_BOXES_NP[scale_index] / np.reshape(ANCHOR_BOXES_NP[scale_index, :, 0], (-1, 1)))[:, 1]
+#     current_heights = np.tile(height / width, np.shape(ANCHOR_BOXES_NP)[0])
+#
+#     height_differences = np.abs(height_ratios - current_heights)
+#     return np.argmin(height_differences)
 
-    height_differences = np.abs(height_ratios - current_heights)
-    return np.argmin(height_differences)
+
+def get_best_anchor_and_scale(width, height):
+    height_ratios = (ANCHOR_BOXES_ALLANCHOR / ANCHOR_BOXES_ALLANCHOR[:, 0:1])[:, 1]
+    current_height_ratio = height / width
+
+    height_ratio_difference = np.abs(height_ratios - current_height_ratio)
+    best_min_ratio = np.argmin(height_ratio_difference)
+
+    scale_idx = best_min_ratio // 3
+    anchor_idx = best_min_ratio % 3
+
+    return anchor_idx, scale_idx
 
 
 class Yolov3Dataloader(utils.Sequence):
     DEFAULT_AUGMENTER = iaa.SomeOf(2, [
-        iaa.Multiply((1.2, 1.5)),  # change brightness, doesn't affect BBs
+        iaa.Multiply((0.8, 1.2)),
         iaa.Affine(
-            translate_px={"x": 3, "y": 10},
-            scale=(1.2, 1.2)
-        ),  # translate by 40/60px on x/y axis, and scale to 50-70%, affects BBs
-        iaa.AdditiveGaussianNoise(scale=0.1 * 255),
+            translate_px={"x": (-3, 3), "y": (-10, 10)},
+            scale=(1.1, 1.2)
+        ),
+        iaa.AdditiveGaussianNoise(scale=(0, 30)),
         iaa.CoarseDropout(0.02, size_percent=0.15, per_channel=0.5),
-        # iaa.Affine(rotate=45),
-        iaa.Sharpen(alpha=0.5)
+        # iaa.Affine(rotate=(-10, 20)),
+        iaa.Sharpen(alpha=(0.0, 0.5))
     ])
 
-    def __init__(self, file_name, dim=(416, 416, 3), batch_size=1, numClass=1, augmentation=False, shuffle=True, verbose=False):
+    def __init__(self, file_name, dim=(416, 416, 3), batch_size=1, numClass=20, augmentation=False, shuffle=True, verbose=False):
         self.image_list, self.label_list = self.GetDataList(file_name)
         self.dim = dim
         self.batch_size = batch_size
@@ -125,25 +139,36 @@ class Yolov3Dataloader(utils.Sequence):
         for i in range(batch_size):
             object_label = np.zeros((label_scale, label_scale, 3, 25), dtype=np.float32)
             for bbox in augmented_labels[i].bounding_boxes:
-                center_x = bbox.center_x
-                center_y = bbox.center_y
-                width = bbox.width
-                height = bbox.height
+                center_x = bbox.center_x / 416
+                center_y = bbox.center_y / 416
+                width = bbox.width / 416
+                height = bbox.height / 416
                 class_id = int(float(bbox.label))  # Explicit
 
-                anchor_idx = get_best_iou_anchor_idx(width, height, scale_index)
+                # anchor_idx = get_best_iou_anchor_idx(width, height, scale_index)
+                best_anchor_idx, best_scale_idx = get_best_anchor_and_scale(width, height)
+                # if best_scale_idx != scale_index:
+                #     continue
 
                 scale_factor = (1 / label_scale)
 
-                grid_x_index = int((center_x / 416) // scale_factor)
-                grid_y_index = int((center_y / 416) // scale_factor)
+                grid_x_index = int(center_x // scale_factor)
+                grid_y_index = int(center_y // scale_factor)
                 grid_x_index, grid_y_index = \
                     np.clip([grid_x_index, grid_y_index], a_min=0, a_max=label_scale - 1)  # 13이면 12까지만...
 
-                if object_label[grid_y_index][grid_x_index][anchor_idx][class_id] == 0.:
-                    object_label[grid_y_index][grid_x_index][anchor_idx][class_id] = 1.
-                    object_label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array(
-                        [center_x, center_y, width, height, 1])
+                cell_relative_x, cell_relative_y = (center_x * label_scale, center_y * label_scale)
+                cell_relative_x, cell_relative_y = \
+                    (cell_relative_x - int(cell_relative_x), cell_relative_y - int(cell_relative_y))
+
+                if self.verbose:
+                    print("[%d] AugGT Grid [y=%d, x=%d, a=%d] %s" % (
+                        label_scale, grid_y_index, grid_x_index, best_anchor_idx, self.labeler.get_name(class_id)))
+
+                if object_label[grid_y_index][grid_x_index][best_anchor_idx][24] == 0.:
+                    object_label[grid_y_index][grid_x_index][best_anchor_idx][class_id] = 1.
+                    object_label[grid_y_index][grid_x_index][best_anchor_idx][20:] = np.array(
+                        [cell_relative_x, cell_relative_y, width, height, 1])
             gt_label[i] = object_label
 
         return gt_label
@@ -159,7 +184,10 @@ class Yolov3Dataloader(utils.Sequence):
             height = bbox.height
             class_id = int(float(bbox.label))  # Explicit
 
-            anchor_idx = get_best_iou_anchor_idx(width, height, scale_index)
+            # anchor_idx = get_best_iou_anchor_idx(width, height, scale_index)
+            best_anchor_idx, best_scale_idx = get_best_anchor_and_scale(width, height)
+            if best_scale_idx != scale_index:
+                continue
 
             scale_factor = (1 / label_scale)
 
@@ -168,9 +196,9 @@ class Yolov3Dataloader(utils.Sequence):
             grid_x_index, grid_y_index = \
                 np.clip([grid_x_index, grid_y_index], a_min=0, a_max=label_scale - 1)  # 13이면 12까지만...
 
-            if label[grid_y_index][grid_x_index][anchor_idx][class_id] == 0.:
-                label[grid_y_index][grid_x_index][anchor_idx][class_id] = 1.
-                label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([center_x, center_y, width, height, 1])
+            if label[grid_y_index][grid_x_index][best_anchor_idx][24] == 0.:
+                label[grid_y_index][grid_x_index][best_anchor_idx][class_id] = 1.
+                label[grid_y_index][grid_x_index][best_anchor_idx][20:] = np.array([center_x, center_y, width, height, 1])
 
                 raw_label.append(np.array([center_x, center_y, width, height, class_id]))
 
@@ -187,6 +215,10 @@ class Yolov3Dataloader(utils.Sequence):
         # Boundary에 있다면 그보다 작은 값이 들어갈 것이다.
         batch_size = len(list_img_path)
 
+        batch_augmenter = False
+        if self.augmenter:
+            batch_augmenter = self.augmenter.to_deterministic()
+
         for scale_id in range(len(SCALES)):
             scale = SCALES[scale_id]
 
@@ -198,18 +230,20 @@ class Yolov3Dataloader(utils.Sequence):
             for i, path in enumerate(list_img_path):
                 # raw_label은 x_1, y_1, x_2, y_2, c를 가지고 있다.
                 label, raw_label = self.GetLabel(list_label_path[i], scale, scale_id)
-                X[i,] = np.array(Image.open(path).resize((self.dim[0], self.dim[1])), dtype=np.float32) / 255.
+                X[i,] = np.asarray(Image.open(path).resize((self.dim[0], self.dim[1])), dtype=np.float32) / 255.
                 Y[i,] = label
                 rX[i] = raw_label
 
             # 가져온 데이터 Augmentation
-            if self.augmenter:
+            if batch_augmenter:
                 # 바운딩박스(Y)는 형식을 바꿔준다.
                 iaa_bbs_list = [self.convert_yololabel_to_iaabbs(k) for k in rX]
 
-                augmented_images = self.augmenter.augment_images(X)
-                augmented_labels = self.augmenter.augment_bounding_boxes(iaa_bbs_list)
+                X_conv = (X * 255).astype(np.uint8)  # DevTools doesn't show corrent values?
+                augmented_images = batch_augmenter.augment_images(X_conv)
+                augmented_images = augmented_images.astype(np.float32) / 255.
 
+                augmented_labels = batch_augmenter.augment_bounding_boxes(iaa_bbs_list)
                 augmented_labels_converted = self.batch_convert_iaabbs_to_yololabel(augmented_labels, scale, scale_id)
 
                 # 기존 값을 대치한다.
@@ -237,8 +271,15 @@ class Yolov3Dataloader(utils.Sequence):
             w = float(w)  # global-relative w, h
             h = float(h)
             c = int(c)
+            
+            # 현재 scale이 최적이 아니면 넘어간다.
+            best_anchor_idx, best_scale_idx = get_best_anchor_and_scale(w, h)
+            if best_scale_idx != scale_index:
+                continue
 
-            anchor_idx = get_best_iou_anchor_idx(w, h, scale_index)
+            # anchor_idx = get_best_iou_anchor_idx(w, h, scale_index)
+
+            # print("anchor_idx: ", str(anchor_idx), ", best_anchor_idx: ", str(best_anchor_idx))
             scale_factor = (1 / label_scale)
 
             # // : 몫
@@ -246,7 +287,7 @@ class Yolov3Dataloader(utils.Sequence):
             grid_y_index = int(y // scale_factor)
 
             if self.verbose:
-                print("[%d] GT Grid [y=%d, x=%d, a=%d] %s" % (label_scale, grid_y_index, grid_x_index, anchor_idx, self.labeler.get_name(c)))
+                print("[%d] GT Grid [y=%d, x=%d, a=%d] %s" % (label_scale, grid_y_index, grid_x_index, best_anchor_idx, self.labeler.get_name(c)))
 
             # x와 y는 해당 grid cell-relative value이다.
             cell_relative_x, cell_relative_y = (x * label_scale, y * label_scale)
@@ -256,15 +297,16 @@ class Yolov3Dataloader(utils.Sequence):
             # 레이블은 하나만 지정한다.
             # 같은 Cell에 두 개 이상의 레이블이 들어가게 되면,
             # 하나의 객체만 사용한다.
-            if label[grid_y_index][grid_x_index][anchor_idx][c] == 0.:
-                label[grid_y_index][grid_x_index][anchor_idx][c] = 1.
-                label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([cell_relative_x, cell_relative_y, w, h, 1])
+            if label[grid_y_index][grid_x_index][best_anchor_idx][24] == 0.:
+
+                label[grid_y_index][grid_x_index][best_anchor_idx][c] = 1.
+                label[grid_y_index][grid_x_index][best_anchor_idx][20:] = np.array([cell_relative_x, cell_relative_y, w, h, 1])
 
                 raw_label.append(np.array([
-                    x - w / 2,
-                    y - h / 2,
-                    x + w / 2,
-                    y + h / 2,
+                    (x - w / 2) * 416,
+                    (y - h / 2) * 416,
+                    (x + w / 2) * 416,
+                    (y + h / 2) * 416,
                     c
                 ]))
             else:
