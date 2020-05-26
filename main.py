@@ -12,6 +12,7 @@ from tensorflow.keras.layers import Lambda
 from YoloLoss import CreateYolov3Loss, SCALES, generate_index_matrix, get_anchor_box
 from YoloModel import Yolov3Model
 from YoloMetrics import *
+from YoloCallbacks import *
 from DataGenerator import Yolov3Dataloader
 
 import tensorflow as tf
@@ -177,7 +178,7 @@ def __main__(args):
     valid_train_data = None
     if args.manifest_valid is not None:
         valid_train_data = Yolov3Dataloader(file_name=args.manifest_valid, numClass=20, batch_size=args.batch_size)
-    # test_data = Yolov3Dataloader(file_name='manifest-test.txt', numClass=20, batch_size=2)
+    test_data = Yolov3Dataloader(file_name='manifest-test.txt', numClass=20, batch_size=2)
 
     LOG_NAME = datetime.datetime.now().strftime("%Y%m%d\\%H%M%S-") + "%s-%s-%depochs-lr%f-%s" % (
         str(get_list_length(args.manifest_train)) + "item",
@@ -192,7 +193,8 @@ def __main__(args):
     CHECKPOINT_TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-")
 
     GLOBAL_EPOCHS = args.epoches
-    SAVE_PERIOD_SAMPLES = len(train_data.image_list) * 10  # 10 epoches
+    SAVE_PERIOD_SAMPLES = len(train_data.image_list) * args.save_epoches  # n epoches
+    DISPLAY_FREQ_EPOCHES = args.display_freq
     VERBOSE_LOSS = True if args.verbosity > 0 else False
 
     # References
@@ -209,9 +211,6 @@ def __main__(args):
     )
 
     # model.summary()
-
-    if args.save_weight:
-        print("Save frequency is {} sample, batch_size={}.".format(SAVE_PERIOD_SAMPLES, train_data.batch_size))
 
     if LOAD_WEIGHT and (LOAD_CHECKPOINT_FILENAME is not None):
         model.load_weights(LOAD_CHECKPOINT_FILENAME)
@@ -239,46 +238,35 @@ def __main__(args):
         baseline=5e-1
     )
 
-    callback_list = []
+    visualizer = VisualizeYolo(
+        test_dataset=test_data,
+        visualizer_fn=visualize,
+        model=model,
+        display_on_begin=False,
+        display_freq_epoches=DISPLAY_FREQ_EPOCHES
+    )
 
-    if not INTERACTIVE_TRAIN:
-        callback_list += [tensor_board]
+    callback_list = [tensor_board]
+
+    if INTERACTIVE_TRAIN:
+        print("[Train] Interactive train display frequency is {} epoches, batch_size={}.".format(DISPLAY_FREQ_EPOCHES, train_data.batch_size))
+        callback_list += [visualizer]
 
     if args.save_weight:
+        print("[Train] Model save frequency is {} sample, batch_size={}.".format(SAVE_PERIOD_SAMPLES, train_data.batch_size))
         callback_list += [model_checkpoint]
+    else:
+        print("[Train] WARNING: Model not saved from here! try \"-s\" flag!")
 
     if MODE_TRAIN:
-        if INTERACTIVE_TRAIN:
-
-            epoch_divide_by = 5
-            epoch_iteration = 0
-            while epoch_iteration * (GLOBAL_EPOCHS / epoch_divide_by) < GLOBAL_EPOCHS:
-
-                # Train <GLOBAL_EPOCHS / epoch_divide_by> epoches
-                model.fit(
-                    train_data,
-                    epochs=int(GLOBAL_EPOCHS / epoch_divide_by),
-                    validation_data=valid_train_data,
-                    shuffle=True,
-                    callbacks=callback_list,
-                    verbose=1
-                )
-
-                image, gt_label = train_data.__getitem__(random.randrange(0, train_data.__len__()))
-                net_out = model.predict(image)
-                visualize(image, gt_label, net_out, batch_range=[0], scale_range=[0, 1, 2],
-                          anchor_range='merge', pred_threshold=0.5, verbose=True)
-
-                epoch_iteration += 1
-        else:
-            model.fit(
-                train_data,
-                epochs=GLOBAL_EPOCHS,
-                validation_data=valid_train_data,
-                shuffle=True,
-                callbacks=callback_list,
-                verbose=1
-            )
+        model.fit(
+            train_data,
+            epochs=GLOBAL_EPOCHS,
+            validation_data=valid_train_data,
+            shuffle=True,
+            callbacks=callback_list,
+            verbose=1
+        )
     else:
         import random
 
@@ -297,9 +285,12 @@ if __name__ == '__main__':
     parser.add_argument('-b', dest='batch_size', type=int, default=16, help='Batch size (Default: 16)')
     parser.add_argument('-e', dest='epoches', type=int, default=200, help='Epoches ( /5 if interactive ) (Default: 200)')
     parser.add_argument('-l', dest='learning_rate', type=float, default=1e-5, help='Learnig rate (Default: 1e-5)')
-    parser.add_argument('-i', dest='interactive', default=False, action='store_true', help='Interactive Mode - display results every /5 epoches (Default: False)')
+    parser.add_argument('-i', dest='interactive', default=False, action='store_true', help='Interactive Mode - display results every N epoches (Default: False)')
+    parser.add_argument('--display-freq', dest='display_freq', type=int, default=10,
+                        help='Interactive Mode - display batch frequency (Default: 10)')
     parser.add_argument('-w', dest='weight_file', type=str, help='(Optional) Weight file to load (Default: None)')
     parser.add_argument('-v', dest='verbosity', type=int, default=0, help='Verbosity (0: None, 1: Loss verb, 2: Loss+DataLoader verb)')
     parser.add_argument('-s', dest='save_weight', default=False, action='store_true',
-                        help='Save weight to file every 10 epoches')
+                        help='Save weight to file every n epoches')
+    parser.add_argument('--save-epoches', dest='save_epoches', type=int, default=400, help='Every epoches after saving weights (Default: 400)')
     __main__(parser.parse_args())
