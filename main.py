@@ -5,6 +5,12 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+
+import tensorflow as tf
+# cumulative GPU memory
+gpus = tf.config.experimental.list_physical_devices('GPU')
+tf.config.experimental.set_memory_growth(gpus[0], True)
 
 from tensorflow.keras.callbacks import ModelCheckpoint, TensorBoard, EarlyStopping
 from tensorflow.keras.optimizers import Adam
@@ -15,8 +21,8 @@ from YoloMetrics import *
 from YoloCallbacks import *
 from DataGenerator import Yolov3Dataloader
 
-import tensorflow as tf
 import argparse
+
 
 # Read class list from file
 class_list = []
@@ -189,7 +195,6 @@ def __main__(args):
     )
 
     CHECKPOINT_SAVE_DIR = "D:\\ModelCheckpoints\\2020-yolov3-impl\\"
-    LOAD_CHECKPOINT_FILENAME = CHECKPOINT_SAVE_DIR + "20200518-150343-weights.epoch400-loss20.38.hdf5"
     CHECKPOINT_TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-")
 
     GLOBAL_EPOCHS = args.epoches
@@ -207,18 +212,21 @@ def __main__(args):
     model.compile(
         optimizer=optimizer,
         loss=[CreateYolov3Loss(SCALES[i], i, verbose=VERBOSE_LOSS) for i in range(len(SCALES))],
-        # metrics=[YoloMetric()]
+        metrics=[YoloMetric(verbose=True)]
     )
 
     # model.summary()
 
-    if LOAD_WEIGHT and (LOAD_CHECKPOINT_FILENAME is not None):
-        model.load_weights(LOAD_CHECKPOINT_FILENAME)
+    if LOAD_WEIGHT and (args.weight_file is not None):
+        print("[Train] Loading weight filr \"%s\" ..." % args.weight_file)
+        model.load_weights(CHECKPOINT_SAVE_DIR + args.weight_file)
+        print("[Train] Weight file loaded")
 
     model_checkpoint = ModelCheckpoint(
         CHECKPOINT_SAVE_DIR + CHECKPOINT_TIMESTAMP + 'weights.epoch{epoch:02d}-loss{loss:.2f}.hdf5',  # 'weights.epoch{epoch:02d}-loss{loss:.2f}-validloss{val_loss:.2f}.hdf5'
         save_best_only=False,
         save_weights_only=True,
+        verbose=1,
         # monitor='loss',
         # mode='min',
         # save_freq=save_frequency
@@ -239,10 +247,11 @@ def __main__(args):
     )
 
     visualizer = VisualizeYolo(
-        test_dataset=test_data,
+        test_dataset=train_data,
         visualizer_fn=visualize,
         model=model,
-        display_on_begin=False,
+        display_count=args.display_count,
+        display_on_begin=True,
         display_freq_epoches=DISPLAY_FREQ_EPOCHES
     )
 
@@ -284,10 +293,14 @@ if __name__ == '__main__':
     parser.add_argument('-t', dest='train', default=True, action='store_true', help='Train Mode (Default: True)')
     parser.add_argument('-b', dest='batch_size', type=int, default=16, help='Batch size (Default: 16)')
     parser.add_argument('-e', dest='epoches', type=int, default=200, help='Epoches ( /5 if interactive ) (Default: 200)')
-    parser.add_argument('-l', dest='learning_rate', type=float, default=1e-5, help='Learnig rate (Default: 1e-5)')
+    parser.add_argument('-l', dest='learning_rate', type=float, default=1e-5, help='Learnig rate (Default: 5e-3)')
     parser.add_argument('-i', dest='interactive', default=False, action='store_true', help='Interactive Mode - display results every N epoches (Default: False)')
     parser.add_argument('--display-freq', dest='display_freq', type=int, default=10,
                         help='Interactive Mode - display batch frequency (Default: 10)')
+    parser.add_argument('--display-count', dest='display_count', type=int, default=1,
+                        help='Interactive Mode - how much to display on interactive display time (Default: 1)')
+    parser.add_argument('--display-on-begin', dest='display_on_begin', default=False, action='store_true',
+                        help='Interactive mode - display first output on begin (Default: False)')
     parser.add_argument('-w', dest='weight_file', type=str, help='(Optional) Weight file to load (Default: None)')
     parser.add_argument('-v', dest='verbosity', type=int, default=0, help='Verbosity (0: None, 1: Loss verb, 2: Loss+DataLoader verb)')
     parser.add_argument('-s', dest='save_weight', default=False, action='store_true',

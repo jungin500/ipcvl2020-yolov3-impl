@@ -75,59 +75,50 @@ class YoloMetric(Metric):
         iou_volume = intersact_volume / union_volume
 
         # Metric 계산
-        netout_conf_exist_mask = tf.cast(pred_conf_nonexpand >= self.thresh_confidance, tf.float32)
-        netout_cond_class_conf = pred_conf * pred_class
 
-        # batch_size = tf.shape(y_pred)[0]
-        # for batch_id in range(batch_size):
-        #     tf.print("Batch Id:", batch_id)
+        # IoU (BBox)
+        pred_gt_iou_match_mask = iou_volume >= self.thresh_iou
+        # pred_gt_iou_volume = iou_volume
 
+        # Class
+        pred_gt_class_match_mask = tf.argmax(pred_class, axis=4) == tf.argmax(label_class, axis=4)
+        # pred_class_value = tf.argmax(pred_class, axis=4)
+        # label_class_value = tf.argmax(label_class, axis=4)
 
-        # selected_indices = tf.image.non_max_suppression(
-        #     boxes=tf.reshape(
-        #         tf.concat(
-        #             [pred_bbox_xy_min[..., 1:2], pred_bbox_xy_min[..., 0:1], pred_bbox_xy_max[..., 1:2], pred_bbox_xy_max[..., 0:1]],
-        #             axis=5
-        #         ),
-        #         shape=[-1, 4]
-        #     ),
-        #     scores=
-        # )
-
-        netout_gt_iou_match_mask = tf.cast(iou_volume >= self.thresh_iou, tf.float32)
-        netout_class_match_mask = tf.cast(tf.argmax(pred_class, axis=4) == tf.argmax(label_class, axis=4), tf.float32)
-
-        netout_decision_mask = netout_conf_exist_mask * netout_gt_iou_match_mask * netout_class_match_mask
-
-        label_object_exist_mask = label_conf_nonexpand
+        # Confidance
+        label_conf_obj_mask = label_conf_nonexpand == 1.
+        pred_conf_obj_mask = pred_conf_nonexpand >= self.thresh_confidance
 
         '''
         TP (True Positive) 계산
         True Positive는, Network의 결과가 Positive(참)인데, 이는 정답(True)인 경우이다. 맞는 경우이다.
         '''
-        true_positive = label_object_exist_mask * netout_decision_mask
-        true_positive = tf.reduce_sum(true_positive)
+        true_positive = pred_conf_obj_mask & label_conf_obj_mask & pred_gt_iou_match_mask & pred_gt_class_match_mask  # logical and
+        true_positive = tf.reduce_sum(tf.cast(true_positive, tf.float32))
 
         '''
         FP (False Positive) 계산
         False Positive는, Network의 결과가 Positive(참)인데, 이는 거짓(False)인 경우이다. 틀린 경우이다.
         '''
-        false_positive = (1. - label_object_exist_mask) * netout_decision_mask
-        false_positive = tf.reduce_sum(false_positive)
+        # false_positive = pred_conf_obj_mask * (1. - label_conf_obj_mask * pred_gt_iou_match_mask * pred_gt_class_match_mask)
+        false_positive = pred_conf_obj_mask & ~(label_conf_obj_mask & pred_gt_iou_match_mask & pred_gt_class_match_mask)
+        false_positive = tf.reduce_sum(tf.cast(false_positive, tf.float32))
 
         '''
         FN (False Negative) 계산
         False Negative는, Network의 결과가 Negative(거짓)인데, 이는 거짓(False)인 경우이다. 틀린 경우이다.
         '''
-        false_negative = label_object_exist_mask * (1. - netout_decision_mask)
-        false_negative = tf.reduce_sum(false_negative)
+        # false_negative = ~(pred_conf_obj_mask & pred_gt_iou_match_mask & pred_gt_class_match_mask) & label_conf_obj_mask
+        false_negative = ~pred_conf_obj_mask & label_conf_obj_mask
+        false_negative = tf.reduce_sum(tf.cast(false_negative, tf.float32))
 
         '''
         TN (True Negative) 계산
         True Negative는, Network의 결과가 Negative(거짓)인데, 이가 참(True)인 경우이다. 맞는 경우이다.
         '''
-        true_negative = (1. - label_object_exist_mask) * (1. - netout_decision_mask)
-        true_negative = tf.reduce_sum(true_negative)
+        # true_negative = (1. - pred_conf_obj_mask) * (1. - label_conf_obj_mask) * (1. - pred_gt_iou_match_mask * pred_gt_class_match_mask)
+        true_negative = ~pred_conf_obj_mask & ~label_conf_obj_mask
+        true_negative = tf.reduce_sum(tf.cast(true_negative, tf.float32))
 
         if self.verbose:
             tf.print("\ntrue_positive:", true_positive)
@@ -142,23 +133,25 @@ class YoloMetric(Metric):
 
     def result(self):
         # Precision
-        self.precision = (self.true_positives + self.epsilon) / (self.true_positives + self.false_positives + self.epsilon)
+        self.precision.assign((self.true_positives + self.epsilon) / (self.true_positives + self.false_positives + self.epsilon))
 
         # Recall
-        self.recall = (self.true_positives + self.epsilon) / (self.true_positives + self.false_negatives + self.epsilon)
+        self.recall.assign((self.true_positives + self.epsilon) / (self.true_positives + self.false_negatives + self.epsilon))
 
         # Accuracy
-        self.accuracy = (self.true_positives + self.true_negatives + self.epsilon) / (
+        self.accuracy.assign((self.true_positives + self.true_negatives + self.epsilon) / (
             self.true_positives + self.true_negatives + self.false_positives + self.false_negatives + self.epsilon
-        )
+        ))
+
+        return self.accuracy
 
     def reset_states(self):
         # The state of the metric will be reset at the start of each epoch.
-        self.true_positives.assign(0.)
-        self.false_positives.assign(0.)
-        self.false_negatives.assign(0.)
-        self.true_negatives.assign(0.)
+        self.true_positives.assign(0)
+        self.false_positives.assign(0)
+        self.false_negatives.assign(0)
+        self.true_negatives.assign(0)
 
-        self.precision.assign(0.)
-        self.recall.assign(0.)
-        self.accuracy.assign(0.)
+        self.precision.assign(0)
+        self.recall.assign(0)
+        self.accuracy.assign(0)
