@@ -1,0 +1,16 @@
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003783.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003784.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003786.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003788.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003790.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003791.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003792.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003793.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003796.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003797.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003798.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003803.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003806.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003807.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003808.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov2-impl\VOC2007\JPEGImages\003809.jpg

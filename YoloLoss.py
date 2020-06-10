@@ -119,8 +119,8 @@ def CreateYolov3Loss(scale_size, scale_index, verbose=False):
 
     # loss multiply
     scale_index_divider = scale_index + 1
-    # volume_loss_multiply = 1. / (scale_index_divider * scale_index_divider)  # /1, /4, /9
-    volume_loss_multiply = 1.
+    volume_loss_multiply = 1. / (scale_index_divider * scale_index_divider)  # /1, /4, /9
+    # volume_loss_multiply = 1.
 
     image_size = 416
 
@@ -222,7 +222,7 @@ def CreateYolov3Loss(scale_size, scale_index, verbose=False):
         # if verbose: tf.print("xy_loss:", tf.reduce_sum(xy_loss))
         # if verbose: tf.print("wh_loss:", tf.reduce_sum(wh_loss))
 
-        box_loss = (tf.reduce_sum(xy_loss) + tf.reduce_sum(wh_loss)) * volume_loss_multiply
+        box_loss = (tf.reduce_sum(xy_loss) + tf.reduce_sum(wh_loss))
         if verbose: tf.print("[%d] box_loss:" % scale_size, box_loss)
 
         '''
@@ -237,11 +237,11 @@ def CreateYolov3Loss(scale_size, scale_index, verbose=False):
         sqrt_cell_class_prob = tf.square(pred_cell_class_prob - label_cell_class_prob)
 
         object_loss = label_object_mask * sqrt_cell_class_prob
-        noobj_loss = lambda_noobj * label_no_object_mask * sqrt_cell_class_prob
+        noobj_loss = lambda_noobj * label_no_object_mask * sqrt_cell_class_prob * volume_loss_multiply
         if verbose: tf.print("object_loss:", tf.reduce_sum(object_loss))
         if verbose: tf.print("noobj_loss:", tf.reduce_sum(noobj_loss))
 
-        confidence_loss = (tf.reduce_sum(object_loss) + tf.reduce_sum(noobj_loss)) * volume_loss_multiply
+        confidence_loss = (tf.reduce_sum(object_loss) + tf.reduce_sum(noobj_loss))
         if verbose: tf.print("[%d] confidence_loss:" % scale_size, confidence_loss)
 
         '''
@@ -251,7 +251,7 @@ def CreateYolov3Loss(scale_size, scale_index, verbose=False):
           → confidence가 어떤 값이든 클래스 확률이 제일 큰 값(chair)을 가져오므로 이상 무
        '''
         class_loss = label_object_mask * tf.square(pred_class - label_class)
-        class_loss = tf.reduce_sum(class_loss) * volume_loss_multiply
+        class_loss = tf.reduce_sum(class_loss)
         if verbose: tf.print("[%d] class_loss:" % scale_size, class_loss, "\n")
 
         return box_loss + confidence_loss + class_loss
